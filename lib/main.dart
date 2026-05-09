@@ -31,7 +31,7 @@ class SmartOfficeApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.white,
       ),
       // 🌟 앱을 켜자마자 가장 먼저 보여줄 화면을 LoginScreen으로 지정합니다!
-      home: const HomeScreen(),
+      home: const LoginScreen(),
     );
   }
 }

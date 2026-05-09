@@ -1,309 +1,234 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart'; // SharedPreferences 추가
+import 'package:shared_preferences/shared_preferences.dart';
+import 'employee_page_card.dart';
 
-import 'menu.dart';
-
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  File? _employeeImage;
-  String _currentTime = "";
-  Timer? _timer;
-
-  // API 연동을 위한 상태 변수
-  bool _isLoading = true;
-  String _name = "";
-  String _position = "";
-  String _department = "";
-  String _employeeNumber = "";
-
-  @override
-  void initState() {
-    super.initState();
-    _updateTime();
-    _timer = Timer.periodic(
-      const Duration(seconds: 1),
-      (Timer t) => _updateTime(),
-    );
-
-    // 화면 진입 시 내 데이터 불러오기
-    _fetchMyProfileData();
-  }
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _idController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _idController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
-  void _updateTime() {
-    setState(() {
-      _currentTime = DateFormat('yyyy년 M월 d일 HH:mm:ss').format(DateTime.now());
-    });
-  }
+  Future<void> _login() async {
+    final String email = _idController.text.trim();
+    final String password = _passwordController.text;
 
-  // 🌟 내 정보 조회(직원) API 연동 - SharedPreferences 토큰 사용 🌟
-  Future<void> _fetchMyProfileData() async {
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('이메일과 비밀번호를 입력해주세요.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
-      // 1. SharedPreferences에서 로그인 시 저장한 토큰 꺼내기
-      final prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-
-      // 토큰이 없는 경우 예외 처리 (로그인이 풀린 경우 등)
-      if (token == null || token.isEmpty) {
-        print('저장된 토큰이 없습니다. 다시 로그인해주세요.');
-        _setDefaultData();
-        return;
-      }
-
-      // 2. 로그인 화면과 동일한 호스트(10.0.2.2) 사용
-      final url = Uri.parse('http://10.0.2.2:8080/api/v1/users/me');
-
-      final response = await http.get(
-        url,
+      final response = await http.post(
+        Uri.parse('http://10.0.2.2:8080/api/v1/auth/login'),
         headers: {
+          'accept': 'application/json',
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token', // 꺼낸 토큰을 헤더에 삽입
         },
+        body: jsonEncode({'email': email, 'password': password}),
       );
+
+      if (!mounted) return;
 
       if (response.statusCode == 200) {
-        final decodedBody = utf8.decode(response.bodyBytes);
-        final json = jsonDecode(decodedBody);
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
 
-        if (json['code'] == 'success') {
-          final data = json['data'];
-          setState(() {
-            _name = data['name'] ?? '이름 없음';
-            _position = data['position'] ?? '';
-            _department = data['department'] ?? '부서 미정';
-            _employeeNumber = data['employeeNumber'] ?? '-';
-            _isLoading = false;
-          });
-        } else {
-          print('API 오류 메시지: ${json['message']}');
-          _setDefaultData();
-        }
+        // 토큰 저장
+        final String? accessToken = responseData['data']['accessToken'];
+        final String? refreshToken = responseData['data']['refreshToken'];
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('auth_token', accessToken ?? '');
+        await prefs.setString('refresh_token', refreshToken ?? '');
+
+        // 로그인 성공 후 홈 화면으로 이동
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
       } else {
-        print('HTTP Error: ${response.statusCode}');
-        _setDefaultData();
+        String errorMessage = '아이디 또는 비밀번호가 틀렸습니다.';
+        try {
+          final errorData = jsonDecode(response.body);
+          if (errorData['message'] != null) {
+            errorMessage = errorData['message'];
+          }
+        } catch (_) {}
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage), backgroundColor: Colors.red),
+        );
       }
     } catch (e) {
-      print('Network Error: $e');
-      _setDefaultData();
-    }
-  }
-
-  // API 호출 실패 시 에러 화면 처리를 위한 함수
-  void _setDefaultData() {
-    setState(() {
-      _name = "정보 불러오기 실패";
-      _position = "";
-      _department = "-";
-      _employeeNumber = "-";
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _pickImageFromGallery() async {
-    var status = await Permission.photos.request();
-    if (status.isGranted) {
-      final XFile? pickedFile = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('서버에 연결할 수 없습니다. 네트워크를 확인해주세요.'),
+          backgroundColor: Colors.red,
+        ),
       );
-      if (pickedFile != null) {
-        setState(() {
-          _employeeImage = File(pickedFile.path);
-        });
-      }
-    } else {
-      openAppSettings();
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double screenHeight = MediaQuery.of(context).size.height;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F4F6),
-      appBar: AppBar(
-        title: const Text(
-          '사원증',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.black,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.menu, color: Color(0xFF4E5968)),
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const MenuScreen()),
-            );
-          },
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Color(0xFF4E5968)),
-            onPressed: () {
-              // 새로고침 시 시간과 사원 정보 다시 로드
-              _updateTime();
-              _fetchMyProfileData();
-            },
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF4E5968)),
-            )
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.1),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(height: screenHeight * 0.05),
+
+                // 1. ID(이메일) 입력 필드
+                TextField(
+                  controller: _idController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(8.0)),
                     ),
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 40),
-                        Stack(
-                          alignment: Alignment.bottomRight,
-                          children: [
-                            Container(
-                              width: 200,
-                              height: 260,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF9FAFB),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: const Color(0xFFF2F4F6),
-                                  width: 1,
-                                ),
-                              ),
-                              child: _employeeImage != null
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(20),
-                                      child: Image.file(
-                                        _employeeImage!,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    )
-                                  : const Center(
-                                      child: Icon(
-                                        Icons.person,
-                                        size: 80,
-                                        color: Color(0xFFD1D6DB),
-                                      ),
-                                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.blue, width: 2.0),
+                    ),
+                  ),
+                ),
+                SizedBox(height: screenHeight * 0.02),
+
+                // 2. Password 입력 필드
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(8.0)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.blue, width: 2.0),
+                    ),
+                  ),
+                  onSubmitted: (_) => _login(),
+                ),
+
+                // 3. 아이디 / 비밀번호 찾기
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (BuildContext context) {
+                          return AlertDialog(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12.0),
                             ),
-                            GestureDetector(
-                              onTap: _pickImageFromGallery,
-                              child: Container(
-                                margin: const EdgeInsets.all(8),
-                                padding: const EdgeInsets.all(8),
-                                decoration: const BoxDecoration(
-                                  color: Color.fromARGB(255, 248, 193, 43),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.add,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
+                            title: const Text(
+                              '안내',
+                              style: TextStyle(fontWeight: FontWeight.bold),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 40),
-
-                        // API 데이터 바인딩
-                        Text(
-                          '$_name $_position',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF191F28),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '$_department · $_employeeNumber',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            color: Color(0xFF8B95A1),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 40),
-
-                        Container(
-                          height: 1,
-                          margin: const EdgeInsets.symmetric(horizontal: 40),
-                          color: const Color(0xFFF2F4F6),
-                        ),
-
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 30),
-                          child: Column(
-                            children: [
-                              const Text(
-                                '현재 시간',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFFB0B8C1),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                _currentTime,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF4E5968),
-                                  fontFamily: 'monospace',
+                            content: const Text('관리자에게 문의하십시오.'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text(
+                                  '확인',
+                                  style: TextStyle(color: Colors.blue),
                                 ),
                               ),
                             ],
-                          ),
-                        ),
-                      ],
+                          );
+                        },
+                      );
+                    },
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(50, 30),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      '아이디 / 비밀번호 찾기',
+                      style: TextStyle(color: Colors.black54, fontSize: 12),
                     ),
                   ),
-                  const SizedBox(height: 30),
-                ],
-              ),
+                ),
+                SizedBox(height: screenHeight * 0.06),
+
+                // 4. 로그인 버튼
+                Center(
+                  child: SizedBox(
+                    width: screenWidth * 0.6,
+                    height: 55,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _login,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4D4D4D),
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: Colors.grey,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12.0),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: _isLoading
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2.5,
+                              ),
+                            )
+                          : const Text(
+                              'LOGIN',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: screenHeight * 0.05),
+              ],
             ),
+          ),
+        ),
+      ),
     );
   }
 }
