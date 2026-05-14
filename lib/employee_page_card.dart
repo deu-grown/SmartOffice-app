@@ -7,9 +7,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart'; // SharedPreferences 추가
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'menu.dart';
+import 'LoginScreen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,7 +24,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String _currentTime = "";
   Timer? _timer;
 
-  // API 연동을 위한 상태 변수
   bool _isLoading = true;
   String _name = "";
   String _position = "";
@@ -38,8 +38,6 @@ class _HomeScreenState extends State<HomeScreen> {
       const Duration(seconds: 1),
       (Timer t) => _updateTime(),
     );
-
-    // 화면 진입 시 내 데이터 불러오기
     _fetchMyProfileData();
   }
 
@@ -55,32 +53,49 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 🌟 내 정보 조회(직원) API 연동 - SharedPreferences 토큰 사용 🌟
+  // ─────────────────────────────────────────────
+  // 로그인 화면으로 이동 (뒤로가기 불가)
+  // ─────────────────────────────────────────────
+
+  void _goToLogin() {
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // 내 정보 조회
+  // ─────────────────────────────────────────────
+
   Future<void> _fetchMyProfileData() async {
     setState(() => _isLoading = true);
 
     try {
-      // 1. SharedPreferences에서 로그인 시 저장한 토큰 꺼내기
       final prefs = await SharedPreferences.getInstance();
       final String? token = prefs.getString('auth_token');
 
-      // 토큰이 없는 경우 예외 처리 (로그인이 풀린 경우 등)
+      // 토큰 없으면 바로 로그인 화면으로
       if (token == null || token.isEmpty) {
-        print('저장된 토큰이 없습니다. 다시 로그인해주세요.');
-        _setDefaultData();
+        _goToLogin();
         return;
       }
 
-      // 2. 로그인 화면과 동일한 호스트(10.0.2.2) 사용
-      final url = Uri.parse('http://10.0.2.2:8080/api/v1/users/me');
-
       final response = await http.get(
-        url,
+        Uri.parse('http://10.0.2.2:8080/api/v1/users/me'),
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token', // 꺼낸 토큰을 헤더에 삽입
+          'Authorization': 'Bearer $token',
         },
       );
+
+      // 인증 실패 시 로그인 화면으로
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        _goToLogin();
+        return;
+      }
 
       if (response.statusCode == 200) {
         final decodedBody = utf8.decode(response.bodyBytes);
@@ -96,28 +111,46 @@ class _HomeScreenState extends State<HomeScreen> {
             _isLoading = false;
           });
         } else {
-          print('API 오류 메시지: ${json['message']}');
-          _setDefaultData();
+          _goToLogin();
         }
       } else {
-        print('HTTP Error: ${response.statusCode}');
-        _setDefaultData();
+        _goToLogin();
       }
     } catch (e) {
-      print('Network Error: $e');
-      _setDefaultData();
+      // 네트워크 오류 → 로그인으로
+      _goToLogin();
     }
   }
 
-  // API 호출 실패 시 에러 화면 처리를 위한 함수
-  void _setDefaultData() {
-    setState(() {
-      _name = "정보 불러오기 실패";
-      _position = "";
-      _department = "-";
-      _employeeNumber = "-";
-      _isLoading = false;
-    });
+  // ─────────────────────────────────────────────
+  // 로그아웃 (확인 없이 바로 처리)
+  // ─────────────────────────────────────────────
+
+  Future<void> _logout() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? accessToken = prefs.getString('auth_token');
+      final String? refreshToken = prefs.getString('refresh_token');
+
+      // 서버에 로그아웃 요청
+      if (accessToken != null && refreshToken != null) {
+        await http.post(
+          Uri.parse('http://10.0.2.2:8080/api/v1/auth/logout'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $accessToken',
+          },
+          body: jsonEncode({'refreshToken': refreshToken}),
+        );
+      }
+    } catch (_) {
+      // 서버 요청 실패해도 로컬 토큰 삭제 후 로그인으로
+    } finally {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('auth_token');
+      await prefs.remove('refresh_token');
+      _goToLogin();
+    }
   }
 
   Future<void> _pickImageFromGallery() async {
@@ -165,7 +198,6 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.refresh, color: Color(0xFF4E5968)),
             onPressed: () {
-              // 새로고침 시 시간과 사원 정보 다시 로드
               _updateTime();
               _fetchMyProfileData();
             },
@@ -246,7 +278,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 40),
 
-                        // API 데이터 바인딩
                         Text(
                           '$_name $_position',
                           style: const TextStyle(
@@ -300,6 +331,64 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
+
+                  const SizedBox(height: 16),
+
+                  // ─── 로그아웃 버튼 (토스 스타일) ───
+                  GestureDetector(
+                    onTap: _logout,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 18,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.04),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF0F0),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.logout_rounded,
+                              color: Colors.red,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          const Text(
+                            '로그아웃',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF191F28),
+                            ),
+                          ),
+                          const Spacer(),
+                          const Icon(
+                            Icons.chevron_right,
+                            color: Color(0xFFB0B8C1),
+                            size: 20,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
                   const SizedBox(height: 30),
                 ],
               ),

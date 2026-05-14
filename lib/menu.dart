@@ -4,7 +4,6 @@ import 'temp_control.dart';
 import 'reservation.dart';
 import 'light.dart';
 import 'recpit.dart'; // 💡 명세서 확인 화면 import
-import 'vacation.dart';
 import 'check.dart';
 
 class MenuScreen extends StatefulWidget {
@@ -57,16 +56,14 @@ class _MenuScreenState extends State<MenuScreen> {
           const SizedBox(height: 32),
 
           _buildSectionTitle('사무실 제어'),
-          _buildListItem('assets/images/image3.png', '온도 습도 조절'),
-          _buildListItem('assets/images/image6.png', '조명조절'),
+          _buildListItem('assets/images/image3.png', '온/습도 조회'),
+          _buildListItem('assets/images/image6.png', '조명 ON/OFF'),
           _buildListItem('assets/images/image4.png', '회의실 예약'),
 
           const SizedBox(height: 32),
 
           _buildSectionTitle('인사/근태'),
           _buildListItem('assets/images/image5.png', '근태조회'),
-          _buildListItem('assets/images/image7.png', '휴가신청/조회'),
-
           SizedBox(height: bottomPadding + 40),
         ],
       ),
@@ -97,7 +94,7 @@ class _MenuScreenState extends State<MenuScreen> {
               context,
               MaterialPageRoute(builder: (context) => const ParkingScreen()),
             );
-          } else if (label == '온도 습도 조절') {
+          } else if (label == '온/습도 조회') {
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -116,11 +113,6 @@ class _MenuScreenState extends State<MenuScreen> {
               context,
               MaterialPageRoute(builder: (context) => const ReceiptScreen()),
             );
-          } else if (label == '휴가신청/조회') {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const VacationScreen()),
-            );
           } else if (label == '근태조회') {
             Navigator.push(
               context,
@@ -128,7 +120,7 @@ class _MenuScreenState extends State<MenuScreen> {
             );
           }
           // 💡 조명조절 (light.dart) 연결
-          else if (label == '조명조절') {
+          else if (label == '조명 ON/OFF') {
             Navigator.push(
               context,
               MaterialPageRoute(

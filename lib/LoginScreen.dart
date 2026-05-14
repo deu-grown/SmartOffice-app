@@ -16,12 +16,119 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
 
+  static const String _baseUrl = 'http://10.0.2.2:8080';
+
   @override
   void dispose() {
     _idController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
+
+  // ─────────────────────────────────────────────
+  // 토큰 저장/조회 유틸
+  // ─────────────────────────────────────────────
+
+  Future<String?> _getAccessToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token');
+  }
+
+  Future<String?> _getRefreshToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('refresh_token');
+  }
+
+  Future<void> _saveAccessToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('auth_token', token);
+  }
+
+  Future<void> _clearTokens() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('auth_token');
+    await prefs.remove('refresh_token');
+  }
+
+  // ─────────────────────────────────────────────
+  // Access Token 재발급
+  // ─────────────────────────────────────────────
+
+  /// Refresh Token으로 새 Access Token을 발급받는다.
+  /// 실패하면 null 반환 → 로그인 화면으로 이동.
+  Future<String?> _refreshAccessToken() async {
+    final refreshToken = await _getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) return null;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/v1/auth/refresh'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refreshToken': refreshToken}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final newAccessToken = data['data']['accessToken'] as String?;
+        if (newAccessToken != null) {
+          await _saveAccessToken(newAccessToken);
+          return newAccessToken;
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  // ─────────────────────────────────────────────
+  // 공통 인증 API 요청 (401 시 자동 재발급)
+  // ─────────────────────────────────────────────
+
+  Future<http.Response> apiRequest({
+    required Future<http.Response> Function(String accessToken) call,
+  }) async {
+    String? token = await _getAccessToken();
+    if (token == null || token.isEmpty) {
+      _goToLogin();
+      return http.Response('{"message":"unauthorized"}', 401);
+    }
+
+    // 1차 시도
+    http.Response response = await call(token);
+
+    // Access Token 만료 → 재발급 후 재시도
+    if (response.statusCode == 401) {
+      final newToken = await _refreshAccessToken();
+
+      if (newToken == null) {
+        // Refresh Token도 만료 → 로그아웃
+        await _clearTokens();
+        _goToLogin();
+        return http.Response('{"message":"session_expired"}', 401);
+      }
+
+      // 새 토큰으로 재시도
+      response = await call(newToken);
+    }
+
+    return response;
+  }
+
+  // ─────────────────────────────────────────────
+  // 로그인 화면으로 이동
+  // ─────────────────────────────────────────────
+
+  void _goToLogin() {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // 로그인
+  // ─────────────────────────────────────────────
 
   Future<void> _login() async {
     final String email = _idController.text.trim();
@@ -41,7 +148,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://10.0.2.2:8080/api/v1/auth/login'),
+        Uri.parse('$_baseUrl/api/v1/auth/login'),
         headers: {
           'accept': 'application/json',
           'Content-Type': 'application/json',
@@ -92,6 +199,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
+
+  // ─────────────────────────────────────────────
+  // UI
+  // ─────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {

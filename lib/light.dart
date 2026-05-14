@@ -45,7 +45,7 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
       backgroundColor: const Color(0xFFF2F4F6),
       appBar: AppBar(
         title: const Text(
-          '조명 조절',
+          '조명 ON/OFF',
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,

@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ParkingScreen extends StatefulWidget {
   const ParkingScreen({super.key});
@@ -8,37 +13,151 @@ class ParkingScreen extends StatefulWidget {
 }
 
 class _ParkingScreenState extends State<ParkingScreen> {
-  int _selectedFloor = 1; // 현재 선택된 층 (1F ~ 5F)
+  static const String _baseUrl = 'http://10.0.2.2:8080';
 
-  // 🌟 실제 데이터 (나중에 서버/DB와 연동할 부분)
-  // false: 주차 가능(초록), true: 주차 중(빨강)
-  final Map<int, List<bool>> _parkingData = {
-    1: [true, false, false, true, false, true, false, false], // 8칸 중 5칸 가능
-    2: [false, false, true, false, true, false, false, false], // 8칸 중 6칸 가능
-    3: [true, true, true, false, false, false, true, false], // 8칸 중 4칸 가능
-    4: [false, true, false, false, false, true, false, true], // 8칸 중 5칸 가능
-    5: [true, false, true, true, false, false, false, false], // 8칸 중 5칸 가능
-  };
+  // ─────────────────────────────────────────────
+  // 나중에 주차장 구역 추가/수정 시 여기만 바꾸면 됩니다
+  // ─────────────────────────────────────────────
+  static const Map<int, String> parkingZones = {9: '1층'};
 
-  // 🌟 특정 층의 '주차 가능(false)' 대수를 실시간으로 계산하는 함수
-  int _getAvailableCount(int floor) {
-    if (!_parkingData.containsKey(floor)) return 0;
-    return _parkingData[floor]!.where((isOccupied) => !isOccupied).length;
+  int _selectedZoneId = 1;
+  bool _isLoading = true;
+  String _errorMessage = '';
+  Timer? _refreshTimer;
+
+  // API 응답 데이터
+  String _zoneName = '';
+  int _totalSpots = 0;
+  int _occupiedSpots = 0;
+  int _availableSpots = 0;
+  List<Map<String, dynamic>> _spots = [];
+
+  // 각 구역별 요약 (하단 현황용)
+  Map<int, Map<String, dynamic>> _zoneSummary = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchParkingData();
+    _fetchAllZoneSummary();
+
+    // 5초마다 자동 새로고침
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _fetchParkingData();
+      _fetchAllZoneSummary();
+    });
   }
 
-  // 🌟 전체 층의 '총 주차 가능' 대수를 실시간으로 계산하는 함수
-  int _getTotalAvailableCount() {
-    int total = 0;
-    _parkingData.forEach((floor, data) {
-      total += data.where((isOccupied) => !isOccupied).length;
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  // ─────────────────────────────────────────────
+  // 선택된 구역 주차 현황 조회
+  // ─────────────────────────────────────────────
+
+  Future<void> _fetchParkingData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('auth_token');
+      if (token == null || token.isEmpty) return;
+
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/v1/parking/zones/$_selectedZoneId/spots'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final decodedBody = utf8.decode(response.bodyBytes);
+        final json = jsonDecode(decodedBody);
+
+        if (json['code'] == 'success') {
+          final data = json['data'];
+          setState(() {
+            _zoneName = data['zoneName'] ?? '';
+            _totalSpots = data['totalSpots'] ?? 0;
+            _occupiedSpots = data['occupiedSpots'] ?? 0;
+            _availableSpots = data['availableSpots'] ?? 0;
+            _spots = List<Map<String, dynamic>>.from(data['spots'] ?? []);
+            _isLoading = false;
+            _errorMessage = '';
+          });
+        }
+      } else {
+        setState(() {
+          _errorMessage = '데이터를 불러올 수 없습니다.';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = '서버에 연결할 수 없습니다.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // 전체 구역 요약 조회 (하단 현황 카드용)
+  // ─────────────────────────────────────────────
+
+  Future<void> _fetchAllZoneSummary() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('auth_token');
+      if (token == null || token.isEmpty) return;
+
+      for (final zoneId in parkingZones.keys) {
+        final response = await http.get(
+          Uri.parse('$_baseUrl/api/v1/parking/zones/$zoneId/spots'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        );
+
+        if (response.statusCode == 200) {
+          final decodedBody = utf8.decode(response.bodyBytes);
+          final json = jsonDecode(decodedBody);
+          if (json['code'] == 'success') {
+            final data = json['data'];
+            if (mounted) {
+              setState(() {
+                _zoneSummary[zoneId] = {
+                  'zoneName': data['zoneName'] ?? parkingZones[zoneId],
+                  'availableSpots': data['availableSpots'] ?? 0,
+                  'totalSpots': data['totalSpots'] ?? 0,
+                };
+              });
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 층 변경 시 호출
+  void _onZoneChanged(int zoneId) {
+    setState(() {
+      _selectedZoneId = zoneId;
+      _isLoading = true;
+      _spots = [];
     });
-    return total;
+    _fetchParkingData();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F4F6), // 토스 배경색
+      backgroundColor: const Color(0xFFF2F4F6),
       appBar: AppBar(
         title: const Text(
           '주차현황',
@@ -55,6 +174,16 @@ class _ParkingScreenState extends State<ParkingScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Color(0xFF4E5968)),
+            onPressed: () {
+              setState(() => _isLoading = true);
+              _fetchParkingData();
+              _fetchAllZoneSummary();
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         child: Column(
@@ -71,22 +200,82 @@ class _ParkingScreenState extends State<ParkingScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 왼쪽: 층 선택 바
-                  _buildFloorSelector(),
+                  _buildZoneSelector(),
                   const SizedBox(width: 20),
-                  // 오른쪽: 주차 격자 지도
+                  // 오른쪽: 주차 격자
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '$_selectedFloor층 주차장',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _zoneName.isEmpty
+                                  ? parkingZones[_selectedZoneId]!
+                                  : _zoneName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            // 실시간 표시
+                            Row(
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF2ECC71),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Text(
+                                  'LIVE',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF2ECC71),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
+                        const SizedBox(height: 8),
+                        if (!_isLoading && _errorMessage.isEmpty)
+                          Text(
+                            '총 $_totalSpots면 · 가능 $_availableSpots면 · 점유 $_occupiedSpots면',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF8B95A1),
+                            ),
+                          ),
                         const SizedBox(height: 16),
-                        _buildParkingGrid(),
+                        _isLoading
+                            ? const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(40),
+                                  child: CircularProgressIndicator(
+                                    color: Color(0xFF4E5968),
+                                  ),
+                                ),
+                              )
+                            : _errorMessage.isNotEmpty
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Text(
+                                    _errorMessage,
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : _buildParkingGrid(),
                         const SizedBox(height: 16),
                         _buildLegend(),
                       ],
@@ -96,7 +285,7 @@ class _ParkingScreenState extends State<ParkingScreen> {
               ),
             ),
 
-            // 2. 하단 현재 주차 현황 요약 카드 (🌟 숫자가 자동으로 계산됩니다)
+            // 2. 하단 전체 현황 요약 카드
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 24),
               padding: const EdgeInsets.all(24),
@@ -112,20 +301,21 @@ class _ParkingScreenState extends State<ParkingScreen> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 20),
-
-                  // 🌟 각 층의 잔여 대수를 함수로 실시간 호출
-                  _buildSummaryRow('5F', '${_getAvailableCount(5)}대 가능'),
-                  _buildSummaryRow('4F', '${_getAvailableCount(4)}대 가능'),
-                  _buildSummaryRow('3F', '${_getAvailableCount(3)}대 가능'),
-                  _buildSummaryRow('2F', '${_getAvailableCount(2)}대 가능'),
-                  _buildSummaryRow('1F', '${_getAvailableCount(1)}대 가능'),
-
+                  ...parkingZones.entries.toList().reversed.map((entry) {
+                    final summary = _zoneSummary[entry.key];
+                    final available = summary?['availableSpots'] ?? '-';
+                    final total = summary?['totalSpots'] ?? '-';
+                    return _buildSummaryRow(
+                      entry.value,
+                      summary == null ? '로딩 중...' : '$available / $total대 가능',
+                    );
+                  }),
                   const Divider(height: 32, color: Color(0xFFF2F4F6)),
-
-                  // 🌟 전체 합계도 자동으로 계산
                   _buildSummaryRow(
                     '총 잔여 주차',
-                    '${_getTotalAvailableCount()}대',
+                    _zoneSummary.isEmpty
+                        ? '로딩 중...'
+                        : '${_zoneSummary.values.fold(0, (sum, z) => sum + (z['availableSpots'] as int? ?? 0))}대',
                     isTotal: true,
                   ),
                 ],
@@ -138,13 +328,13 @@ class _ParkingScreenState extends State<ParkingScreen> {
     );
   }
 
-  // 층 선택 사이드 바
-  Widget _buildFloorSelector() {
+  // 구역 선택 사이드 바
+  Widget _buildZoneSelector() {
     return Column(
-      children: [5, 4, 3, 2, 1].map((floor) {
-        bool isSelected = _selectedFloor == floor;
+      children: parkingZones.entries.toList().reversed.map((entry) {
+        final isSelected = _selectedZoneId == entry.key;
         return GestureDetector(
-          onTap: () => setState(() => _selectedFloor = floor),
+          onTap: () => _onZoneChanged(entry.key),
           child: Container(
             width: 45,
             height: 45,
@@ -157,10 +347,11 @@ class _ParkingScreenState extends State<ParkingScreen> {
             ),
             child: Center(
               child: Text(
-                '${floor}F',
+                '${entry.key}F',
                 style: TextStyle(
                   color: isSelected ? Colors.white : const Color(0xFF8B95A1),
                   fontWeight: FontWeight.bold,
+                  fontSize: 13,
                 ),
               ),
             ),
@@ -170,9 +361,20 @@ class _ParkingScreenState extends State<ParkingScreen> {
     );
   }
 
-  // 주차 격자 지도 (선택된 층에 따라 실시간 변경)
+  // 주차 격자 (API 데이터 기반)
   Widget _buildParkingGrid() {
-    List<bool> currentFloorData = _parkingData[_selectedFloor]!;
+    if (_spots.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: Text(
+            '주차면 정보가 없습니다.',
+            style: TextStyle(color: Color(0xFF8B95A1)),
+          ),
+        ),
+      );
+    }
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -182,28 +384,53 @@ class _ParkingScreenState extends State<ParkingScreen> {
         crossAxisSpacing: 10,
         childAspectRatio: 1.5,
       ),
-      itemCount: currentFloorData.length,
+      itemCount: _spots.length,
       itemBuilder: (context, index) {
-        bool isOccupied = currentFloorData[index];
+        final spot = _spots[index];
+        final bool isOccupied = spot['occupied'] ?? false;
+        final String spotNumber = spot['spotNumber'] ?? '';
+        final String spotType = spot['spotType'] ?? '';
+
         return Container(
           decoration: BoxDecoration(
-            color: isOccupied
+            color: spot['spotStatus'] == 'INACTIVE'
+                ? const Color(0xFFD1D6DB)
+                : isOccupied
                 ? const Color(0xFFFF4D4D)
                 : const Color(0xFF2ECC71),
             borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                spotNumber,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              if (spotType == 'DISABLED')
+                const Icon(Icons.accessible, color: Colors.white, size: 14)
+              else if (spotType == 'EV')
+                const Icon(Icons.electric_car, color: Colors.white, size: 14),
+            ],
           ),
         );
       },
     );
   }
 
-  // 범례 (색상 설명)
+  // 범례
   Widget _buildLegend() {
     return Row(
       children: [
         _legendItem(const Color(0xFF2ECC71), '가능'),
         const SizedBox(width: 12),
         _legendItem(const Color(0xFFFF4D4D), '만차'),
+        const SizedBox(width: 12),
+        _legendItem(const Color(0xFFD1D6DB), '비활성'),
       ],
     );
   }
@@ -225,15 +452,15 @@ class _ParkingScreenState extends State<ParkingScreen> {
     );
   }
 
-  // 요약 행 위젯 (🌟 MainAxisAlignment 오타 수정됨)
-  Widget _buildSummaryRow(String floor, String count, {bool isTotal = false}) {
+  // 요약 행
+  Widget _buildSummaryRow(String label, String value, {bool isTotal = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween, // 🌟 수정 완료
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            floor,
+            label,
             style: TextStyle(
               fontSize: isTotal ? 16 : 14,
               fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
@@ -243,7 +470,7 @@ class _ParkingScreenState extends State<ParkingScreen> {
             ),
           ),
           Text(
-            count,
+            value,
             style: TextStyle(
               fontSize: isTotal ? 16 : 14,
               fontWeight: FontWeight.bold,

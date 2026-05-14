@@ -47,7 +47,7 @@ class _TempControlScreenState extends State<TempControlScreen> {
       backgroundColor: const Color(0xFFF2F4F6),
       appBar: AppBar(
         title: const Text(
-          '실내 온·습도 조절',
+          '실내 온·습도 조회',
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,
