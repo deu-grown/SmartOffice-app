@@ -16,11 +16,30 @@ class _ParkingScreenState extends State<ParkingScreen> {
   static const String _baseUrl = 'http://10.0.2.2:8080';
 
   // ─────────────────────────────────────────────
-  // 나중에 주차장 구역 추가/수정 시 여기만 바꾸면 됩니다
+  // 주차장 구역 매핑 — 백엔드 zones 시드와 일치
+  //   key   : 백엔드 zone_id
+  //   value : 화면에 표시할 층 이름
+  // 백엔드 시드: zone 8 = 지하1층, zone 9 = 지하2층
   // ─────────────────────────────────────────────
-  static const Map<int, String> parkingZones = {9: '1층'};
+  static const Map<int, String> parkingZones = {
+    8: '지하1층',
+    9: '지하2층',
+  };
 
-  int _selectedZoneId = 1;
+  // 좌측 셀렉터에 표시할 짧은 라벨 (지하1층 → B1)
+  static String _zoneShortLabel(int zoneId) {
+    switch (zoneId) {
+      case 8:
+        return 'B1';
+      case 9:
+        return 'B2';
+      default:
+        return '${zoneId}F';
+    }
+  }
+
+  // 초기 선택은 parkingZones 의 첫 번째 키 (현재: 지하1층=8)
+  int _selectedZoneId = parkingZones.keys.first;
   bool _isLoading = true;
   String _errorMessage = '';
   Timer? _refreshTimer;
@@ -347,7 +366,7 @@ class _ParkingScreenState extends State<ParkingScreen> {
             ),
             child: Center(
               child: Text(
-                '${entry.key}F',
+                _zoneShortLabel(entry.key),
                 style: TextStyle(
                   color: isSelected ? Colors.white : const Color(0xFF8B95A1),
                   fontWeight: FontWeight.bold,
