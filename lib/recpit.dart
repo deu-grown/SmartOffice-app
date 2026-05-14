@@ -32,6 +32,9 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
   // 내 급여 내역 조회
   // ─────────────────────────────────────────────
 
+  // 한 번에 조회할 최근 개월 수 (현재 달 포함)
+  static const int _monthsToFetch = 6;
+
   Future<void> _fetchSalaryRecords() async {
     setState(() {
       _isLoading = true;
@@ -50,79 +53,56 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
         return;
       }
 
-      // ── 1단계: 내 userId 가져오기 ──
-      final meResponse = await http.get(
-        Uri.parse('$_baseUrl/api/v1/auth/me'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      // 최근 N개월(현재 달부터 역순) (year, month) 리스트 생성
+      final now = DateTime.now();
+      final periods = List<DateTime>.generate(
+        _monthsToFetch,
+        (i) => DateTime(now.year, now.month - i, 1),
+      );
+
+      // 본인 급여 단건 API를 월별로 병렬 호출
+      final responses = await Future.wait(
+        periods.map((d) {
+          final uri = Uri.parse(
+            '$_baseUrl/api/v1/salary/records/me?year=${d.year}&month=${d.month}',
+          );
+          return http.get(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          );
+        }),
       );
 
       if (!mounted) return;
 
-      if (meResponse.statusCode != 200) {
-        setState(() {
-          _errorMessage = '사용자 정보를 불러올 수 없습니다. (${meResponse.statusCode})';
-          _isLoading = false;
-        });
-        return;
-      }
-
-      final meJson = jsonDecode(utf8.decode(meResponse.bodyBytes));
-      final int? userId = meJson['data']?['id'];
-
-      if (userId == null) {
-        setState(() {
-          _errorMessage = '사용자 ID를 가져올 수 없습니다.';
-          _isLoading = false;
-        });
-        return;
-      }
-
-      // ── 2단계: userId로 급여 내역 조회 ──
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/v1/salary/records?userId=$userId'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
-
-      if (!mounted) return;
-
-      if (response.statusCode == 200) {
-        final decodedBody = utf8.decode(response.bodyBytes);
-        final json = jsonDecode(decodedBody);
-
-        if (json['code'] == 'success') {
-          final data = json['data'];
-          // content 배열이 있으면 사용, 없으면 data 자체가 배열인 경우 처리
-          final List<dynamic> records = data is Map
-              ? (data['content'] ?? data['records'] ?? [])
-              : data;
-          setState(() {
-            _salaryRecords = List<Map<String, dynamic>>.from(records);
-            _selectedIndex = 0;
-            _isLoading = false;
-          });
-        } else {
-          setState(() {
-            _errorMessage = json['message'] ?? '데이터를 불러올 수 없습니다.';
-            _isLoading = false;
-          });
-        }
-      } else if (response.statusCode == 401) {
+      // 한 건이라도 401이 오면 인증 만료로 처리
+      if (responses.any((r) => r.statusCode == 401)) {
         setState(() {
           _errorMessage = '인증이 만료되었습니다. 다시 로그인해주세요.';
           _isLoading = false;
         });
-      } else {
-        setState(() {
-          _errorMessage = '서버 오류가 발생했습니다. (${response.statusCode})';
-          _isLoading = false;
-        });
+        return;
       }
+
+      // 200 응답만 모아 단건 데이터를 누적 (없는 달은 404 등으로 무시)
+      final records = <Map<String, dynamic>>[];
+      for (final r in responses) {
+        if (r.statusCode == 200) {
+          final json = jsonDecode(utf8.decode(r.bodyBytes));
+          if (json['code'] == 'success' && json['data'] != null) {
+            records.add(Map<String, dynamic>.from(json['data'] as Map));
+          }
+        }
+      }
+
+      setState(() {
+        _salaryRecords = records;
+        _selectedIndex = 0;
+        _isLoading = false;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
