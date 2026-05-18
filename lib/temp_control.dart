@@ -1,30 +1,37 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
-// 1. 데이터를 관리하는 매니저 클래스 (앱이 켜져 있는 동안 데이터 유지)
-class RoomSettings {
-  static final RoomSettings _instance = RoomSettings._internal();
-  factory RoomSettings() => _instance;
-  RoomSettings._internal();
+class SensorZoneData {
+  final int zoneId;
+  final String zoneName;
+  final double? temp;
+  final double? humi;
+  final double? co2;
+  final String? updatedAt;
 
-  // 처음 앱 실행 시 초기 데이터
-  final List<RoomData> rooms = [
-    RoomData(name: '회의실 A', temp: 22.0, humidity: 45),
-    RoomData(name: '회의실 B', temp: 24.5, humidity: 50),
-    RoomData(name: '대회의실', temp: 21.0, humidity: 40),
-    RoomData(name: '라운지', temp: 23.0, humidity: 48),
-    RoomData(name: '포커스룸', temp: 25.0, humidity: 35),
-  ];
+  SensorZoneData({
+    required this.zoneId,
+    required this.zoneName,
+    this.temp,
+    this.humi,
+    this.co2,
+    this.updatedAt,
+  });
 
-  int lastSelectedIndex = 0; // 마지막으로 선택했던 방 기억
-}
-
-// 방 데이터 모델
-class RoomData {
-  final String name;
-  double temp;
-  int humidity;
-
-  RoomData({required this.name, required this.temp, required this.humidity});
+  factory SensorZoneData.fromJson(Map<String, dynamic> json) {
+    return SensorZoneData(
+      zoneId: json['zoneId'] as int,
+      zoneName: json['zoneName'] as String,
+      temp: json['temp'] != null ? (json['temp'] as num).toDouble() : null,
+      humi: json['humi'] != null ? (json['humi'] as num).toDouble() : null,
+      co2: json['co2'] != null ? (json['co2'] as num).toDouble() : null,
+      updatedAt: json['updatedAt'] as String?,
+    );
+  }
 }
 
 class TempControlScreen extends StatefulWidget {
@@ -35,14 +42,104 @@ class TempControlScreen extends StatefulWidget {
 }
 
 class _TempControlScreenState extends State<TempControlScreen> {
-  // 2. 싱글톤 인스턴스를 가져옵니다.
-  final RoomSettings _settings = RoomSettings();
+  static const String _baseUrl = 'http://10.0.2.2:8080';
+
+  List<SensorZoneData> _zones = [];
+  int _selectedIndex = 0;
+  bool _isLoading = true;
+  String _errorMessage = '';
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchSensorData();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _fetchSensorData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchSensorData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('auth_token');
+      if (token == null || token.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = '로그인이 필요합니다.';
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/v1/dashboard/sensors/current'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final decodedBody = utf8.decode(response.bodyBytes);
+        final json = jsonDecode(decodedBody);
+
+        if (json['code'] == 'success') {
+          final List<dynamic> dataList = json['data'] ?? [];
+          setState(() {
+            _zones = dataList
+                .map((e) => SensorZoneData.fromJson(e as Map<String, dynamic>))
+                .toList();
+            if (_selectedIndex >= _zones.length && _zones.isNotEmpty) {
+              _selectedIndex = 0;
+            }
+            _isLoading = false;
+            _errorMessage = '';
+          });
+        } else {
+          setState(() {
+            _errorMessage = '데이터를 불러올 수 없습니다.';
+            _isLoading = false;
+          });
+        }
+      } else {
+        setState(() {
+          _errorMessage = '서버 오류가 발생했습니다. (${response.statusCode})';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = '서버에 연결할 수 없습니다.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _formatUpdatedAt(String? raw) {
+    if (raw == null) return '';
+    try {
+      final dt = DateTime.parse(raw);
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '${dt.month}/${dt.day} $h:$m 기준';
+    } catch (_) {
+      return '';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 현재 선택된 방 데이터 참조
-    final selectedRoom = _settings.rooms[_settings.lastSelectedIndex];
-
     return Scaffold(
       backgroundColor: const Color(0xFFF2F4F6),
       appBar: AppBar(
@@ -61,113 +158,112 @@ class _TempControlScreenState extends State<TempControlScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Color(0xFF4E5968)),
+            onPressed: () {
+              setState(() => _isLoading = true);
+              _fetchSensorData();
+            },
+          ),
+        ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 24, 24, 12),
-              child: Text(
-                '공간 선택',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF4E5968),
-                ),
-              ),
-            ),
-
-            // 회의실 선택 가로 스크롤바
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: List.generate(_settings.rooms.length, (index) {
-                  return _buildRoomChip(index);
-                }),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.all(24.0),
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF4E5968)),
+            )
+          : _errorMessage.isNotEmpty
+          ? Center(
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 상단 현재 상태 카드
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Column(
+                  const Icon(Icons.error_outline, size: 48, color: Color(0xFFD1D6DB)),
+                  const SizedBox(height: 16),
+                  Text(
+                    _errorMessage,
+                    style: const TextStyle(color: Color(0xFF8B95A1), fontSize: 15),
+                  ),
+                  const SizedBox(height: 24),
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _isLoading = true);
+                      _fetchSensorData();
+                    },
+                    child: const Text('다시 시도'),
+                  ),
+                ],
+              ),
+            )
+          : _zones.isEmpty
+          ? const Center(
+              child: Text(
+                '센서 데이터가 없습니다.',
+                style: TextStyle(color: Color(0xFF8B95A1), fontSize: 15),
+              ),
+            )
+          : SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // LIVE 배지
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+                    child: Row(
                       children: [
-                        _buildStatusRow(
-                          '현재 온도',
-                          '${selectedRoom.temp.toStringAsFixed(1)}°C',
-                          Icons.thermostat,
-                          Colors.orange,
+                        const Text(
+                          '공간 선택',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF4E5968),
+                          ),
                         ),
-                        const SizedBox(height: 16),
-                        const Divider(color: Color(0xFFF2F4F6)),
-                        const SizedBox(height: 16),
-                        _buildStatusRow(
-                          '현재 습도',
-                          '${selectedRoom.humidity}%',
-                          Icons.water_drop,
-                          Colors.blue,
+                        const SizedBox(width: 10),
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF2ECC71),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Text(
+                          'LIVE',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF2ECC71),
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 12),
 
-                  // 온도 조절 카드
-                  _buildControlCard(
-                    title: '${selectedRoom.name} 온도 설정',
-                    value: '${selectedRoom.temp.toStringAsFixed(1)}°C',
-                    icon: Icons.thermostat,
-                    iconColor: Colors.orange,
-                    onIncrease: () => setState(() => selectedRoom.temp += 0.5),
-                    onDecrease: () => setState(() => selectedRoom.temp -= 0.5),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 습도 조절 카드
-                  _buildControlCard(
-                    title: '${selectedRoom.name} 습도 설정',
-                    value: '${selectedRoom.humidity}%',
-                    icon: Icons.water_drop,
-                    iconColor: Colors.blue,
-                    onIncrease: () =>
-                        setState(() => selectedRoom.humidity += 1),
-                    onDecrease: () =>
-                        setState(() => selectedRoom.humidity -= 1),
-                  ),
-
-                  const SizedBox(height: 40),
-                  Text(
-                    '설정된 온·습도는 ${selectedRoom.name}에 즉시 적용됩니다.',
-                    style: const TextStyle(
-                      color: Color(0xFF8B95A1),
-                      fontSize: 13,
+                  // 구역 선택 가로 스크롤
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: List.generate(_zones.length, _buildZoneChip),
                     ),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: _buildSensorCard(_zones[_selectedIndex]),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
     );
   }
 
-  // 공간 선택 칩 위젯
-  Widget _buildRoomChip(int index) {
-    bool isSelected = _settings.lastSelectedIndex == index;
+  Widget _buildZoneChip(int index) {
+    final bool isSelected = _selectedIndex == index;
     return GestureDetector(
-      onTap: () => setState(() => _settings.lastSelectedIndex = index),
+      onTap: () => setState(() => _selectedIndex = index),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 6),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -186,7 +282,7 @@ class _TempControlScreenState extends State<TempControlScreen> {
           ],
         ),
         child: Text(
-          _settings.rooms[index].name,
+          _zones[index].zoneName,
           style: TextStyle(
             color: isSelected ? Colors.white : const Color(0xFF4E5968),
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -196,13 +292,56 @@ class _TempControlScreenState extends State<TempControlScreen> {
     );
   }
 
-  // 이하 공통 UI 위젯들은 동일...
-  Widget _buildStatusRow(
-    String label,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
+  Widget _buildSensorCard(SensorZoneData zone) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        children: [
+          _buildSensorRow(
+            '현재 온도',
+            zone.temp != null ? '${zone.temp!.toStringAsFixed(1)}°C' : '-',
+            Icons.thermostat,
+            Colors.orange,
+          ),
+          const SizedBox(height: 16),
+          const Divider(color: Color(0xFFF2F4F6)),
+          const SizedBox(height: 16),
+          _buildSensorRow(
+            '현재 습도',
+            zone.humi != null ? '${zone.humi!.toStringAsFixed(1)}%' : '-',
+            Icons.water_drop,
+            Colors.blue,
+          ),
+          const SizedBox(height: 16),
+          const Divider(color: Color(0xFFF2F4F6)),
+          const SizedBox(height: 16),
+          _buildSensorRow(
+            'CO₂',
+            zone.co2 != null ? '${zone.co2!.toStringAsFixed(0)} ppm' : '-',
+            Icons.air,
+            Colors.green,
+          ),
+          if (zone.updatedAt != null) ...[
+            const SizedBox(height: 20),
+            Text(
+              _formatUpdatedAt(zone.updatedAt),
+              style: const TextStyle(
+                color: Color(0xFF8B95A1),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSensorRow(String label, String value, IconData icon, Color color) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -229,83 +368,6 @@ class _TempControlScreenState extends State<TempControlScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildControlCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color iconColor,
-    required VoidCallback onIncrease,
-    required VoidCallback onDecrease,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: const BoxDecoration(
-              color: Color(0xFFF2F4F6),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: iconColor, size: 30),
-          ),
-          const SizedBox(width: 20),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF8B95A1),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF191F28),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            children: [
-              _buildRoundButton(Icons.keyboard_arrow_up, onIncrease),
-              const SizedBox(height: 12),
-              _buildRoundButton(Icons.keyboard_arrow_down, onDecrease),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRoundButton(IconData icon, VoidCallback onPressed) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF2F4F6),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(icon, color: const Color(0xFF4E5968), size: 24),
-      ),
     );
   }
 }
