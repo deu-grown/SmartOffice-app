@@ -1,33 +1,127 @@
+import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
-// --- 1. 데이터 모델 및 매니저 ---
-class Room {
+const String _baseUrl = 'http://10.0.2.2:8080';
+
+Future<String?> _getToken() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString('auth_token');
+}
+
+// --- 데이터 모델 ---
+class ZoneRoom {
+  final int id;
   final String name;
-  bool isAvailable;
-  Room({required this.name, this.isAvailable = true});
+
+  ZoneRoom({required this.id, required this.name});
 }
 
-class ReservationManager {
-  static final ReservationManager _instance = ReservationManager._internal();
-  factory ReservationManager() => _instance;
-  ReservationManager._internal();
+class ReservationSlot {
+  final int id;
+  final String startTime;
+  final String endTime;
+  final String status;
 
-  List<Room> rooms = List.generate(
-    8,
-    (i) => Room(name: '회의실 ${i + 1}', isAvailable: true),
-  );
+  ReservationSlot({
+    required this.id,
+    required this.startTime,
+    required this.endTime,
+    required this.status,
+  });
+
+  factory ReservationSlot.fromJson(Map<String, dynamic> json) {
+    return ReservationSlot(
+      id: json['id'] as int,
+      startTime: json['startTime'] as String,
+      endTime: json['endTime'] as String,
+      status: json['status'] as String? ?? '',
+    );
+  }
 }
 
-// --- 2. 회의실 목록 화면 (Grid형) ---
+// --- 1. 회의실 목록 화면 ---
 class RoomListScreen extends StatefulWidget {
   const RoomListScreen({super.key});
+
   @override
   State<RoomListScreen> createState() => _RoomListScreenState();
 }
 
 class _RoomListScreenState extends State<RoomListScreen> {
-  final manager = ReservationManager();
+  List<ZoneRoom> _rooms = [];
+  bool _isLoading = true;
+  String _errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchZones();
+  }
+
+  Future<void> _fetchZones() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      final token = await _getToken();
+      if (token == null || token.isEmpty) {
+        setState(() {
+          _errorMessage = '로그인이 필요합니다.';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final res = await http.get(
+        Uri.parse('$_baseUrl/api/v1/zones'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (res.statusCode == 200) {
+        final body = jsonDecode(utf8.decode(res.bodyBytes));
+        final List<dynamic> data = body['data'] ?? [];
+        final rooms = data
+            .where((z) {
+              final type = z['zoneType'] as String? ?? '';
+              return type == 'AREA' || type == 'ROOM';
+            })
+            .map(
+              (z) => ZoneRoom(
+                id: z['id'] as int,
+                name: z['name'] as String? ?? '구역 ${z['id']}',
+              ),
+            )
+            .toList();
+
+        setState(() {
+          _rooms = rooms;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _errorMessage = '구역 정보를 불러올 수 없습니다. (${res.statusCode})';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '서버에 연결할 수 없습니다.';
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,32 +142,73 @@ class _RoomListScreenState extends State<RoomListScreen> {
           icon: const Icon(Icons.arrow_back, color: Color(0xFF191F28)),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Color(0xFF4E5968)),
+            onPressed: _fetchZones,
+          ),
+        ],
       ),
-      body: GridView.builder(
-        padding: const EdgeInsets.all(20),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: 0.85,
-        ),
-        itemCount: manager.rooms.length,
-        itemBuilder: (context, index) => _buildRoomCard(manager.rooms[index]),
-      ),
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF4E5968)),
+            )
+          : _errorMessage.isNotEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: Color(0xFF8B95A1),
+                    size: 48,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _errorMessage,
+                    style: const TextStyle(
+                      color: Color(0xFF8B95A1),
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: _fetchZones,
+                    child: const Text('다시 시도'),
+                  ),
+                ],
+              ),
+            )
+          : _rooms.isEmpty
+          ? const Center(
+              child: Text(
+                '예약 가능한 회의실이 없습니다.',
+                style: TextStyle(color: Color(0xFF8B95A1)),
+              ),
+            )
+          : GridView.builder(
+              padding: const EdgeInsets.all(20),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 0.85,
+              ),
+              itemCount: _rooms.length,
+              itemBuilder: (context, index) => _buildRoomCard(_rooms[index]),
+            ),
     );
   }
 
-  Widget _buildRoomCard(Room room) {
+  Widget _buildRoomCard(ZoneRoom room) {
     return GestureDetector(
       onTap: () {
-        if (room.isAvailable) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ReservationDetailScreen(room: room),
-            ),
-          ).then((_) => setState(() {})); // 돌아왔을 때 상태 업데이트
-        }
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ReservationDetailScreen(room: room),
+          ),
+        ).then((_) => _fetchZones());
       },
       child: Container(
         decoration: BoxDecoration(
@@ -90,33 +225,34 @@ class _RoomListScreenState extends State<RoomListScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            const Icon(
+              Icons.meeting_room_outlined,
+              size: 36,
+              color: Color(0xFF3182F6),
+            ),
+            const SizedBox(height: 12),
             Text(
               room.name,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.bold,
-                color: room.isAvailable
-                    ? const Color(0xFF333D4B)
-                    : const Color(0xFFF04452),
+                color: Color(0xFF333D4B),
               ),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: room.isAvailable
-                    ? const Color(0xFFE8F3FF)
-                    : const Color(0xFFFEECEE),
+                color: const Color(0xFFE8F3FF),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Text(
-                room.isAvailable ? '예약하기' : '예약완료',
+              child: const Text(
+                '예약하기',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
-                  color: room.isAvailable
-                      ? const Color(0xFF3182F6)
-                      : const Color(0xFFF04452),
+                  color: Color(0xFF3182F6),
                 ),
               ),
             ),
@@ -127,10 +263,12 @@ class _RoomListScreenState extends State<RoomListScreen> {
   }
 }
 
-// --- 3. 예약 상세 화면 (고기능 통합형) ---
+// --- 2. 예약 상세 화면 ---
 class ReservationDetailScreen extends StatefulWidget {
-  final Room room;
+  final ZoneRoom room;
+
   const ReservationDetailScreen({super.key, required this.room});
+
   @override
   State<ReservationDetailScreen> createState() =>
       _ReservationDetailScreenState();
@@ -141,42 +279,90 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
   TimeOfDay? _startTime;
   TimeOfDay? _endTime;
 
-  final String _reserverName = "홍길동 (20212187)";
+  final TextEditingController _purposeController = TextEditingController();
 
-  final List<Map<String, String>> _employees = [
-    {'id': '20210001', 'name': '김철수', 'dept': '개발팀'},
-    {'id': '20210002', 'name': '이영희', 'dept': '디자인팀'},
-    {'id': '20210003', 'name': '박지민', 'dept': '인사팀'},
-    {'id': '20230555', 'name': '강동원', 'dept': '영업팀'},
-  ];
-
-  List<Map<String, String>> _selectedParticipants = [];
-  List<Map<String, String>> _filteredResults = [];
-  final TextEditingController _searchController = TextEditingController();
+  List<ReservationSlot> _existingSlots = [];
+  bool _isLoadingSlots = false;
+  bool _isSubmitting = false;
+  String _userName = '';
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() {
-      final query = _searchController.text;
-      if (query.isEmpty)
-        setState(() => _filteredResults = []);
-      else {
+    _fetchDayReservations();
+    _fetchUserName();
+  }
+
+  Future<void> _fetchUserName() async {
+    try {
+      final token = await _getToken();
+      if (token == null || token.isEmpty) return;
+
+      final res = await http.get(
+        Uri.parse('$_baseUrl/api/v1/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (res.statusCode == 200) {
+        final body = jsonDecode(utf8.decode(res.bodyBytes));
+        final name = body['data']?['name'] as String? ?? '';
+        setState(() => _userName = name);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _purposeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchDayReservations() async {
+    setState(() => _isLoadingSlots = true);
+
+    try {
+      final token = await _getToken();
+      if (token == null || token.isEmpty) return;
+
+      final dateStr =
+          '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
+
+      final res = await http.get(
+        Uri.parse(
+          '$_baseUrl/api/v1/zones/${widget.room.id}/reservations?date=$dateStr',
+        ),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (res.statusCode == 200) {
+        final body = jsonDecode(utf8.decode(res.bodyBytes));
+        final data = body['data'];
+        final List<dynamic> list = data['attendanceList'] ?? [];
         setState(() {
-          _filteredResults = _employees
-              .where(
-                (e) =>
-                    (e['name']!.contains(query) || e['id']!.contains(query)) &&
-                    !_selectedParticipants.contains(e),
-              )
+          _existingSlots = list
+              .map((e) => ReservationSlot.fromJson(e as Map<String, dynamic>))
+              .where((s) => s.status != 'CANCELLED')
               .toList();
         });
       }
-    });
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isLoadingSlots = false);
+    }
   }
 
   Future<void> _selectDate() async {
-    DateTime? picked = await showDatePicker(
+    final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime.now(),
@@ -188,7 +374,13 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
         child: child!,
       ),
     );
-    if (picked != null) setState(() => _selectedDate = picked);
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked;
+        _existingSlots = [];
+      });
+      _fetchDayReservations();
+    }
   }
 
   void _showTimePicker(bool isStart) {
@@ -213,10 +405,11 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                 use24hFormat: true,
                 onDateTimeChanged: (DateTime d) {
                   setState(() {
-                    if (isStart)
+                    if (isStart) {
                       _startTime = TimeOfDay.fromDateTime(d);
-                    else
+                    } else {
                       _endTime = TimeOfDay.fromDateTime(d);
+                    }
                   });
                 },
               ),
@@ -227,10 +420,110 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     );
   }
 
+  String _toIso(DateTime date, TimeOfDay time) {
+    final y = date.year;
+    final mo = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    final h = time.hour.toString().padLeft(2, '0');
+    final mi = time.minute.toString().padLeft(2, '0');
+    return '$y-$mo-${d}T$h:$mi:00';
+  }
+
+  String _formatTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '$h:$m';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  Future<void> _submitReservation() async {
+    if (_startTime == null || _endTime == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('시작 시간과 종료 시간을 선택해 주세요.')));
+      return;
+    }
+
+    final startDt = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _startTime!.hour,
+      _startTime!.minute,
+    );
+    final endDt = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _endTime!.hour,
+      _endTime!.minute,
+    );
+
+    if (!endDt.isAfter(startDt)) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('종료 시간은 시작 시간보다 늦어야 합니다.')));
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final token = await _getToken();
+      if (token == null || token.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
+        return;
+      }
+
+      final body = jsonEncode({
+        'zoneId': widget.room.id,
+        'startTime': _toIso(_selectedDate, _startTime!),
+        'endTime': _toIso(_selectedDate, _endTime!),
+        if (_purposeController.text.trim().isNotEmpty)
+          'purpose': _purposeController.text.trim(),
+      });
+
+      final res = await http.post(
+        Uri.parse('$_baseUrl/api/v1/reservations'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: body,
+      );
+
+      if (!mounted) return;
+
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('예약이 완료되었습니다.')));
+        Navigator.pop(context);
+      } else {
+        final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(decoded['message'] ?? '예약에 실패했습니다.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('서버에 연결할 수 없습니다.')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    int totalCount = _selectedParticipants.length + 1;
-
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -258,27 +551,30 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildLabel("예약날짜"),
+                    // 날짜 선택
+                    _buildLabel('예약 날짜'),
                     GestureDetector(
                       onTap: _selectDate,
-                      child: _buildTossInput(
+                      child: _buildInput(
                         text:
-                            "${_selectedDate.year}-${_selectedDate.month}-${_selectedDate.day}",
+                            '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}',
                         icon: Icons.calendar_today,
                       ),
                     ),
                     const SizedBox(height: 20),
+
+                    // 시간 선택
                     Row(
                       children: [
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildLabel("예약시간"),
+                              _buildLabel('시작 시간'),
                               GestureDetector(
                                 onTap: () => _showTimePicker(true),
-                                child: _buildTossInput(
-                                  text: _startTime?.format(context) ?? "시간 선택",
+                                child: _buildInput(
+                                  text: _startTime?.format(context) ?? '시간 선택',
                                 ),
                               ),
                             ],
@@ -289,11 +585,11 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildLabel("종료시간"),
+                              _buildLabel('종료 시간'),
                               GestureDetector(
                                 onTap: () => _showTimePicker(false),
-                                child: _buildTossInput(
-                                  text: _endTime?.format(context) ?? "시간 선택",
+                                child: _buildInput(
+                                  text: _endTime?.format(context) ?? '시간 선택',
                                 ),
                               ),
                             ],
@@ -302,49 +598,76 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    _buildLabel("예약자명"),
-                    _buildTossInput(
-                      text: _reserverName,
-                      color: const Color(0xFFF2F4F6),
+
+                    // 예약자명
+                    _buildLabel('예약자명'),
+                    _buildInput(
+                      text: _userName.isEmpty ? '불러오는 중...' : _userName,
+                      icon: Icons.person_outline,
                       textColor: Colors.grey,
                     ),
                     const SizedBox(height: 20),
-                    _buildLabel("추가 참여자"),
-                    _buildSearchField(),
-                    if (_filteredResults.isNotEmpty) _buildSearchResults(),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      children: _selectedParticipants
-                          .map(
-                            (p) => Chip(
-                              label: Text(
-                                p['name']!,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
+
+                    // 사용 목적
+                    _buildLabel('사용 목적 (선택)'),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F4F6),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: TextField(
+                        controller: _purposeController,
+                        decoration: const InputDecoration(
+                          hintText: '예) 팀 주간 회의',
+                          border: InputBorder.none,
+                          hintStyle: TextStyle(color: Color(0xFF8B95A1)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+
+                    // 당일 예약 현황
+                    Row(
+                      children: [
+                        _buildLabel('당일 예약 현황'),
+                        if (_isLoadingSlots)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFF3182F6),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    _existingSlots.isEmpty && !_isLoadingSlots
+                        ? Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF2F4F6),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Center(
+                              child: Text(
+                                '해당 날짜에 예약이 없습니다.',
+                                style: TextStyle(
+                                  color: Color(0xFF8B95A1),
+                                  fontSize: 13,
                                 ),
-                              ),
-                              onDeleted: () => setState(
-                                () => _selectedParticipants.remove(p),
-                              ),
-                              backgroundColor: const Color(0xFFF2F4F6),
-                              side: BorderSide.none,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
                               ),
                             ),
                           )
-                          .toList(),
-                    ),
-                    const SizedBox(height: 20),
-                    _buildLabel("참여 인원"),
-                    _buildTossInput(
-                      text: "$totalCount명",
-                      color: const Color(0xFFF2F4F6),
-                      textColor: Colors.grey,
-                      icon: Icons.people,
-                    ),
+                        : Column(
+                            children: _existingSlots
+                                .map((slot) => _buildSlotTile(slot))
+                                .toList(),
+                          ),
                     const SizedBox(height: 40),
                   ],
                 ),
@@ -353,6 +676,36 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
             _buildBottomButton(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSlotTile(ReservationSlot slot) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEECEE),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.access_time, size: 16, color: Color(0xFFF04452)),
+          const SizedBox(width: 8),
+          Text(
+            '${_formatTime(slot.startTime)} ~ ${_formatTime(slot.endTime)}',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFFF04452),
+            ),
+          ),
+          const Spacer(),
+          Text(
+            slot.status == 'CONFIRMED' ? '확정' : slot.status,
+            style: const TextStyle(fontSize: 12, color: Color(0xFFF04452)),
+          ),
+        ],
       ),
     );
   }
@@ -369,17 +722,12 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     ),
   );
 
-  Widget _buildTossInput({
-    required String text,
-    IconData? icon,
-    Color? color,
-    Color? textColor,
-  }) {
+  Widget _buildInput({required String text, IconData? icon, Color? textColor}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
-        color: color ?? const Color(0xFFF2F4F6),
+        color: const Color(0xFFF2F4F6),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -388,77 +736,14 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
             text,
             style: TextStyle(
               fontSize: 15,
-              color: textColor ?? Colors.black,
               fontWeight: FontWeight.w500,
+              color: textColor ?? Colors.black,
             ),
           ),
           const Spacer(),
           if (icon != null)
             Icon(icon, size: 18, color: const Color(0xFF8B95A1)),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSearchField() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF2F4F6),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: TextField(
-        controller: _searchController,
-        decoration: const InputDecoration(
-          hintText: "사번 또는 이름 검색",
-          border: InputBorder.none,
-          icon: Icon(Icons.search, size: 20, color: Color(0xFF8B95A1)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchResults() {
-    return Container(
-      margin: const EdgeInsets.only(top: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
-        border: Border.all(color: const Color(0xFFF2F4F6)),
-      ),
-      child: Column(
-        children: _filteredResults
-            .map(
-              (emp) => ListTile(
-                title: Text(
-                  emp['name']!,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                subtitle: Text(
-                  "${emp['dept']} | ${emp['id']}",
-                  style: const TextStyle(fontSize: 11),
-                ),
-                onTap: () {
-                  setState(() {
-                    _selectedParticipants.add(emp);
-                    _searchController.clear();
-                    _filteredResults = [];
-                    FocusScope.of(context).unfocus();
-                  });
-                },
-              ),
-            )
-            .toList(),
       ),
     );
   }
@@ -477,27 +762,20 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
             ),
             elevation: 0,
           ),
-          onPressed: () {
-            if (_startTime == null || _endTime == null) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('시간을 선택해 주세요.')));
-              return;
-            }
-            setState(() => widget.room.isAvailable = false);
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('예약이 완료되었습니다.')));
-            Navigator.pop(context);
-          },
-          child: const Text(
-            '예약 완료하기',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
+          onPressed: _isSubmitting ? null : _submitReservation,
+          child: _isSubmitting
+              ? const CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 3,
+                )
+              : const Text(
+                  '예약 완료하기',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
         ),
       ),
     );
