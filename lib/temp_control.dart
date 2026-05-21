@@ -21,17 +21,6 @@ class SensorZoneData {
     this.co2,
     this.updatedAt,
   });
-
-  factory SensorZoneData.fromJson(Map<String, dynamic> json) {
-    return SensorZoneData(
-      zoneId: json['zoneId'] as int,
-      zoneName: json['zoneName'] as String,
-      temp: json['temp'] != null ? (json['temp'] as num).toDouble() : null,
-      humi: json['humi'] != null ? (json['humi'] as num).toDouble() : null,
-      co2: json['co2'] != null ? (json['co2'] as num).toDouble() : null,
-      updatedAt: json['updatedAt'] as String?,
-    );
-  }
 }
 
 class TempControlScreen extends StatefulWidget {
@@ -43,6 +32,19 @@ class TempControlScreen extends StatefulWidget {
 
 class _TempControlScreenState extends State<TempControlScreen> {
   static const String _baseUrl = 'http://10.0.2.2:8080';
+
+  // 센서 데이터를 조회할 사무 공간 구역 목록 (시드 기반)
+  static const Map<int, String> _officeZones = {
+    2:  '회의실 A',
+    4:  '회의실 B',
+    5:  '개발팀 좌석',
+    7:  '서버실',
+    10: '회의실 C',
+    11: '회의실 D',
+    12: '회의실 E',
+    13: '휴게실',
+    14: '카페 라운지',
+  };
 
   List<SensorZoneData> _zones = [];
   int _selectedIndex = 0;
@@ -79,44 +81,46 @@ class _TempControlScreenState extends State<TempControlScreen> {
         return;
       }
 
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/v1/dashboard/sensors/current'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
+      final headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      };
+
+      // 각 구역별로 GET /api/v1/sensors/latest?zoneId= 병렬 호출
+      final futures = _officeZones.entries.map((entry) async {
+        try {
+          final res = await http.get(
+            Uri.parse('$_baseUrl/api/v1/sensors/latest?zoneId=${entry.key}'),
+            headers: headers,
+          );
+          if (res.statusCode == 200) {
+            final body = jsonDecode(utf8.decode(res.bodyBytes));
+            if (body['code'] == 'success') {
+              final data = body['data'] as Map<String, dynamic>;
+              final int totalCount = data['totalCount'] as int;
+              if (totalCount > 0) {
+                final List<dynamic> list = data['sensorDataList'];
+                return _parseSensorZone(entry.key, entry.value, list);
+              }
+            }
+          }
+        } catch (_) {}
+        return null;
+      });
+
+      final results = await Future.wait(futures);
 
       if (!mounted) return;
 
-      if (response.statusCode == 200) {
-        final decodedBody = utf8.decode(response.bodyBytes);
-        final json = jsonDecode(decodedBody);
-
-        if (json['code'] == 'success') {
-          final List<dynamic> dataList = json['data'] ?? [];
-          setState(() {
-            _zones = dataList
-                .map((e) => SensorZoneData.fromJson(e as Map<String, dynamic>))
-                .toList();
-            if (_selectedIndex >= _zones.length && _zones.isNotEmpty) {
-              _selectedIndex = 0;
-            }
-            _isLoading = false;
-            _errorMessage = '';
-          });
-        } else {
-          setState(() {
-            _errorMessage = '데이터를 불러올 수 없습니다.';
-            _isLoading = false;
-          });
+      final zones = results.whereType<SensorZoneData>().toList();
+      setState(() {
+        _zones = zones;
+        if (_selectedIndex >= _zones.length && _zones.isNotEmpty) {
+          _selectedIndex = 0;
         }
-      } else {
-        setState(() {
-          _errorMessage = '서버 오류가 발생했습니다. (${response.statusCode})';
-          _isLoading = false;
-        });
-      }
+        _isLoading = false;
+        _errorMessage = '';
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -124,6 +128,31 @@ class _TempControlScreenState extends State<TempControlScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  SensorZoneData _parseSensorZone(
+      int zoneId, String zoneName, List<dynamic> list) {
+    double? temp, humi, co2;
+    String? updatedAt;
+
+    for (final s in list) {
+      final type = (s['sensorType'] as String? ?? '').toUpperCase();
+      final raw = s['value'];
+      final value = raw != null ? (raw as num).toDouble() : null;
+      if (type == 'TEMPERATURE' || type == 'TEMP') temp = value;
+      else if (type == 'HUMIDITY' || type == 'HUMI') humi = value;
+      else if (type == 'CO2') co2 = value;
+      updatedAt ??= s['timestamp'] as String?;
+    }
+
+    return SensorZoneData(
+      zoneId: zoneId,
+      zoneName: zoneName,
+      temp: temp,
+      humi: humi,
+      co2: co2,
+      updatedAt: updatedAt,
+    );
   }
 
   String _formatUpdatedAt(String? raw) {
@@ -177,11 +206,13 @@ class _TempControlScreenState extends State<TempControlScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error_outline, size: 48, color: Color(0xFFD1D6DB)),
+                  const Icon(Icons.error_outline,
+                      size: 48, color: Color(0xFFD1D6DB)),
                   const SizedBox(height: 16),
                   Text(
                     _errorMessage,
-                    style: const TextStyle(color: Color(0xFF8B95A1), fontSize: 15),
+                    style: const TextStyle(
+                        color: Color(0xFF8B95A1), fontSize: 15),
                   ),
                   const SizedBox(height: 24),
                   TextButton(
@@ -205,7 +236,6 @@ class _TempControlScreenState extends State<TempControlScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // LIVE 배지
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
                     child: Row(
@@ -241,7 +271,6 @@ class _TempControlScreenState extends State<TempControlScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // 구역 선택 가로 스크롤
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -275,7 +304,8 @@ class _TempControlScreenState extends State<TempControlScreen> {
           boxShadow: [
             if (isSelected)
               BoxShadow(
-                color: const Color.fromARGB(255, 248, 193, 43).withOpacity(0.3),
+                color:
+                    const Color.fromARGB(255, 248, 193, 43).withOpacity(0.3),
                 blurRadius: 8,
                 offset: const Offset(0, 4),
               ),
@@ -285,7 +315,8 @@ class _TempControlScreenState extends State<TempControlScreen> {
           _zones[index].zoneName,
           style: TextStyle(
             color: isSelected ? Colors.white : const Color(0xFF4E5968),
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontWeight:
+                isSelected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       ),
@@ -317,15 +348,6 @@ class _TempControlScreenState extends State<TempControlScreen> {
             Icons.water_drop,
             Colors.blue,
           ),
-          const SizedBox(height: 16),
-          const Divider(color: Color(0xFFF2F4F6)),
-          const SizedBox(height: 16),
-          _buildSensorRow(
-            'CO₂',
-            zone.co2 != null ? '${zone.co2!.toStringAsFixed(0)} ppm' : '-',
-            Icons.air,
-            Colors.green,
-          ),
           if (zone.updatedAt != null) ...[
             const SizedBox(height: 20),
             Text(
@@ -341,7 +363,8 @@ class _TempControlScreenState extends State<TempControlScreen> {
     );
   }
 
-  Widget _buildSensorRow(String label, String value, IconData icon, Color color) {
+  Widget _buildSensorRow(
+      String label, String value, IconData icon, Color color) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [

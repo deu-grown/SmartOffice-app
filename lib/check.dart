@@ -16,6 +16,7 @@ class AttendanceRecord {
   final String? checkIn;
   final String? checkOut;
   final String status;
+  final String? holidayName;
 
   AttendanceRecord({
     required this.date,
@@ -23,7 +24,12 @@ class AttendanceRecord {
     this.checkIn,
     this.checkOut,
     required this.status,
+    this.holidayName,
   });
+
+  bool get isHoliday => holidayName != null;
+  bool get isRed =>
+      dayOfWeek == '토' || dayOfWeek == '일' || isHoliday;
 }
 
 class _AttendancePageState extends State<AttendancePage> {
@@ -52,6 +58,51 @@ class _AttendancePageState extends State<AttendancePage> {
       return m;
     });
     _fetchAttendance(_selectedMonth);
+  }
+
+  // 연도별 대한민국 공휴일 (고정 + 음력 기반 + 대체공휴일)
+  static Map<String, String> _getKoreanHolidays(int year) {
+    final Map<String, String> h = {};
+
+    String d(int m, int day) =>
+        '$year-${m.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
+
+    // 고정 공휴일
+    h[d(1, 1)] = '신정';
+    h[d(3, 1)] = '삼일절';
+    h[d(5, 5)] = '어린이날';
+    h[d(6, 6)] = '현충일';
+    h[d(8, 15)] = '광복절';
+    h[d(10, 3)] = '개천절';
+    h[d(10, 9)] = '한글날';
+    h[d(12, 25)] = '성탄절';
+
+    // 연도별 음력 기반 공휴일 + 대체공휴일
+    switch (year) {
+      case 2025:
+        h['2025-01-28'] = '설날 연휴';
+        h['2025-01-29'] = '설날';
+        h['2025-01-30'] = '설날 연휴';
+        h['2025-03-03'] = '삼일절 대체'; // 3/1 토요일
+        h['2025-05-06'] = '부처님 오신 날'; // 5/5 어린이날 겹쳐 대체
+        h['2025-10-05'] = '추석 연휴';
+        h['2025-10-06'] = '추석';
+        h['2025-10-07'] = '추석 연휴';
+        h['2025-10-08'] = '추석 대체'; // 연휴 일요일 겹침
+      case 2026:
+        h['2026-01-27'] = '설날 연휴';
+        h['2026-01-28'] = '설날';
+        h['2026-01-29'] = '설날 연휴';
+        h['2026-03-02'] = '삼일절 대체'; // 3/1 일요일
+        h['2026-05-22'] = '부처님 오신 날'; // 음력 4/8
+        h['2026-08-17'] = '광복절 대체'; // 8/15 토요일
+        h['2026-09-22'] = '추석 연휴';
+        h['2026-09-23'] = '추석 연휴';
+        h['2026-09-24'] = '추석';
+        h['2026-09-25'] = '추석 연휴';
+    }
+
+    return h;
   }
 
   Future<String?> _getToken() async {
@@ -119,6 +170,10 @@ class _AttendancePageState extends State<AttendancePage> {
     );
   }
 
+  String _toDateStr(int year, int month, int day) =>
+      '$year-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
+
+
   Future<void> _fetchAttendance(int month) async {
     setState(() {
       _isLoading = true;
@@ -169,22 +224,24 @@ class _AttendancePageState extends State<AttendancePage> {
 
       // 2. 일별 근태 병렬 조회
       final dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+      final holidays = _getKoreanHolidays(_currentYear);
       final futures = <Future<AttendanceRecord>>[];
 
       for (int d = 1; d <= endDay; d++) {
         final dateObj = DateTime(_currentYear, month, d);
         final dayOfWeek = dayNames[dateObj.weekday % 7];
         final isWeekend = dateObj.weekday == 6 || dateObj.weekday == 7;
+        final dateStr = _toDateStr(_currentYear, month, d);
+        final holidayName = holidays[dateStr];
 
-        if (isWeekend) {
+        if (isWeekend || holidayName != null) {
           futures.add(Future.value(AttendanceRecord(
             date: '$month/$d',
             dayOfWeek: dayOfWeek,
-            status: '미등록',
+            status: holidayName != null ? '공휴일' : '미등록',
+            holidayName: holidayName,
           )));
         } else {
-          final dateStr =
-              '$_currentYear-${month.toString().padLeft(2, '0')}-${d.toString().padLeft(2, '0')}';
           futures.add(
             _fetchDailyRecord(dateStr, dayOfWeek, month, d, headers),
           );
@@ -428,8 +485,7 @@ class _AttendancePageState extends State<AttendancePage> {
   }
 
   Widget _buildRecordCard(AttendanceRecord record, bool isToday) {
-    final isWeekend =
-        record.dayOfWeek == '토' || record.dayOfWeek == '일';
+    final isRed = record.isRed;
 
     Color badgeBgColor;
     Color badgeTextColor;
@@ -450,6 +506,10 @@ class _AttendancePageState extends State<AttendancePage> {
       case '조기퇴근':
         badgeBgColor = const Color(0xFFFFF4E6);
         badgeTextColor = const Color(0xFFE65100);
+        break;
+      case '공휴일':
+        badgeBgColor = Colors.red.shade50;
+        badgeTextColor = Colors.red.shade400;
         break;
       default:
         badgeBgColor = const Color(0xFFF2F4F6);
@@ -492,7 +552,7 @@ class _AttendancePageState extends State<AttendancePage> {
                     width: 52,
                     height: 52,
                     decoration: BoxDecoration(
-                      color: isWeekend
+                      color: isRed
                           ? Colors.red.shade50
                           : const Color(0xFFF2F4F6),
                       shape: BoxShape.circle,
@@ -505,7 +565,7 @@ class _AttendancePageState extends State<AttendancePage> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w500,
-                            color: isWeekend
+                            color: isRed
                                 ? Colors.red.shade400
                                 : const Color(0xFF8B95A1),
                           ),
@@ -515,7 +575,7 @@ class _AttendancePageState extends State<AttendancePage> {
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
-                            color: isWeekend
+                            color: isRed
                                 ? Colors.red.shade500
                                 : const Color(0xFF191F28),
                           ),
@@ -546,7 +606,11 @@ class _AttendancePageState extends State<AttendancePage> {
                   Text(
                     record.checkIn != null
                         ? '${record.checkIn} ~ ${record.checkOut ?? '진행중'}'
-                        : (isWeekend ? '주말' : '기록 없음'),
+                        : record.isHoliday
+                        ? record.holidayName!
+                        : (record.dayOfWeek == '토' || record.dayOfWeek == '일'
+                            ? '주말'
+                            : '기록 없음'),
                     style: const TextStyle(
                       fontSize: 15.5,
                       fontWeight: FontWeight.w600,

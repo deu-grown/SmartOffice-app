@@ -78,7 +78,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
       }
 
       final res = await http.get(
-        Uri.parse('$_baseUrl/api/v1/zones'),
+        Uri.parse('$_baseUrl/api/v1/zones/reservable'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
