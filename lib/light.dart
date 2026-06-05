@@ -27,18 +27,18 @@ class LightingControlScreen extends StatefulWidget {
 }
 
 class _LightingControlScreenState extends State<LightingControlScreen> {
-  static const String _baseUrl = 'http://10.0.2.2:8080';
+  static const String _baseUrl = 'https://api.sjparkx1129.com';
 
   // V15 시드 기반 — 구역별 첫 번째 LIGHT 장치
   static const _zoneDeviceMap = [
-    {'zoneId': 2,  'zoneName': '회의실 A',    'deviceId': 21},
-    {'zoneId': 4,  'zoneName': '회의실 B',    'deviceId': 24},
-    {'zoneId': 5,  'zoneName': '개발팀 좌석',  'deviceId': 29},
-    {'zoneId': 7,  'zoneName': '서버실',       'deviceId': 34},
-    {'zoneId': 10, 'zoneName': '회의실 C',    'deviceId': 37},
-    {'zoneId': 11, 'zoneName': '회의실 D',    'deviceId': 40},
-    {'zoneId': 12, 'zoneName': '회의실 E',    'deviceId': 44},
-    {'zoneId': 13, 'zoneName': '휴게실',       'deviceId': 48},
+    {'zoneId': 2, 'zoneName': '회의실 A', 'deviceId': 21},
+    {'zoneId': 4, 'zoneName': '회의실 B', 'deviceId': 24},
+    {'zoneId': 5, 'zoneName': '개발팀 좌석', 'deviceId': 29},
+    {'zoneId': 7, 'zoneName': '서버실', 'deviceId': 34},
+    {'zoneId': 10, 'zoneName': '회의실 C', 'deviceId': 37},
+    {'zoneId': 11, 'zoneName': '회의실 D', 'deviceId': 40},
+    {'zoneId': 12, 'zoneName': '회의실 E', 'deviceId': 44},
+    {'zoneId': 13, 'zoneName': '휴게실', 'deviceId': 48},
     {'zoneId': 14, 'zoneName': '카페 라운지', 'deviceId': 51},
   ];
 
@@ -49,12 +49,14 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
   void initState() {
     super.initState();
     _zones = _zoneDeviceMap
-        .map((z) => LightZoneData(
-              zoneId: z['zoneId'] as int,
-              zoneName: z['zoneName'] as String,
-              deviceId: z['deviceId'] as int,
-              isLightOn: false,
-            ))
+        .map(
+          (z) => LightZoneData(
+            zoneId: z['zoneId'] as int,
+            zoneName: z['zoneName'] as String,
+            deviceId: z['deviceId'] as int,
+            isLightOn: false,
+          ),
+        )
         .toList();
   }
 
@@ -67,9 +69,9 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
     final zone = _zones[index];
 
     if (zone.deviceId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('이 구역에 제어 가능한 장치가 없습니다.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('이 구역에 제어 가능한 장치가 없습니다.')));
       return;
     }
 
@@ -88,9 +90,9 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
             _zones[index].isLightOn = !newState;
             _zones[index].isSending = false;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('로그인이 필요합니다.')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
         }
         return;
       }
@@ -131,9 +133,9 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
           _zones[index].isLightOn = !newState;
           _zones[index].isSending = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('서버에 연결할 수 없습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('서버에 연결할 수 없습니다.')));
       }
     }
   }
@@ -436,7 +438,11 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
                                       Icons.power_settings_new,
                                       color: selectedZone.isLightOn
                                           ? const Color.fromARGB(
-                                              255, 248, 193, 43)
+                                              255,
+                                              248,
+                                              193,
+                                              43,
+                                            )
                                           : const Color(0xFF8B95A1),
                                       size: 30,
                                     ),

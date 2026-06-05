@@ -33,7 +33,7 @@ class AttendanceRecord {
 }
 
 class _AttendancePageState extends State<AttendancePage> {
-  static const String _baseUrl = 'http://10.0.2.2:8080';
+  static const String _baseUrl = 'https://api.sjparkx1129.com';
 
   final int _currentYear = DateTime.now().year;
   late int _selectedMonth;

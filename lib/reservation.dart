@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-const String _baseUrl = 'http://10.0.2.2:8080';
+const String _baseUrl = 'https://api.sjparkx1129.com';
 
 Future<String?> _getToken() async {
   final prefs = await SharedPreferences.getInstance();
