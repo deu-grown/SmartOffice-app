@@ -13,7 +13,7 @@ class ParkingScreen extends StatefulWidget {
 }
 
 class _ParkingScreenState extends State<ParkingScreen> {
-  static const String _baseUrl = 'http://10.0.2.2:8080';
+  static const String _baseUrl = 'https://api.sjparkx1129.com';
 
   // ─────────────────────────────────────────────
   // 주차장 구역 매핑 — 백엔드 zones 시드와 일치

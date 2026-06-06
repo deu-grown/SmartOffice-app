@@ -31,7 +31,7 @@ class TempControlScreen extends StatefulWidget {
 }
 
 class _TempControlScreenState extends State<TempControlScreen> {
-  static const String _baseUrl = 'http://10.0.2.2:8080';
+  static const String _baseUrl = 'https://api.sjparkx1129.com';
 
   // 센서 데이터를 조회할 사무 공간 구역 목록 (시드 기반)
   static const Map<int, String> _officeZones = {

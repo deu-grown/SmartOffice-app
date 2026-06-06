@@ -84,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final response = await http.get(
-        Uri.parse('http://10.0.2.2:8080/api/v1/users/me'),
+        Uri.parse('https://api.sjparkx1129.com/api/v1/users/me'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -135,7 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // 서버에 로그아웃 요청
       if (accessToken != null && refreshToken != null) {
         await http.post(
-          Uri.parse('http://10.0.2.2:8080/api/v1/auth/logout'),
+          Uri.parse('https://api.sjparkx1129.com/api/v1/auth/logout'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $accessToken',
