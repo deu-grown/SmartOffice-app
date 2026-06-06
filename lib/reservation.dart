@@ -135,7 +135,10 @@ class _RoomListScreenState extends State<RoomListScreen> {
     }
   }
 
-  Future<void> _fetchTodayBookedRooms(List<ZoneRoom> rooms, String token) async {
+  Future<void> _fetchTodayBookedRooms(
+    List<ZoneRoom> rooms,
+    String token,
+  ) async {
     final today = DateTime.now();
     final dateStr =
         '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
@@ -144,7 +147,9 @@ class _RoomListScreenState extends State<RoomListScreen> {
       rooms.map((room) async {
         try {
           final res = await http.get(
-            Uri.parse('$_baseUrl/api/v1/zones/${room.id}/reservations?date=$dateStr'),
+            Uri.parse(
+              '$_baseUrl/api/v1/zones/${room.id}/reservations?date=$dateStr',
+            ),
             headers: {
               'Authorization': 'Bearer $token',
               'Content-Type': 'application/json',
@@ -156,7 +161,10 @@ class _RoomListScreenState extends State<RoomListScreen> {
             final List<dynamic> list = data['reservationList'] ?? [];
             final slots = list
                 .where((e) => (e['status'] as String? ?? '') != 'CANCELLED')
-                .map((e) => '${_toHHmm(e['startTime'] as String)}-${_toHHmm(e['endTime'] as String)}')
+                .map(
+                  (e) =>
+                      '${_toHHmm(e['startTime'] as String)}-${_toHHmm(e['endTime'] as String)}',
+                )
                 .toList();
             if (slots.isNotEmpty) return MapEntry(room.id, slots);
           }
@@ -257,9 +265,15 @@ class _RoomListScreenState extends State<RoomListScreen> {
   Widget _buildRoomCard(ZoneRoom room, List<String>? slots) {
     final isBooked = slots != null && slots.isNotEmpty;
     final cardColor = isBooked ? const Color(0xFFFFF0F0) : Colors.white;
-    final iconColor = isBooked ? const Color(0xFFF04452) : const Color(0xFF3182F6);
-    final badgeColor = isBooked ? const Color(0xFFFFE0E3) : const Color(0xFFE8F3FF);
-    final badgeTextColor = isBooked ? const Color(0xFFF04452) : const Color(0xFF3182F6);
+    final iconColor = isBooked
+        ? const Color(0xFFF04452)
+        : const Color(0xFF3182F6);
+    final badgeColor = isBooked
+        ? const Color(0xFFFFE0E3)
+        : const Color(0xFFE8F3FF);
+    final badgeTextColor = isBooked
+        ? const Color(0xFFF04452)
+        : const Color(0xFF3182F6);
 
     return GestureDetector(
       onTap: () {
@@ -285,11 +299,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.meeting_room_outlined,
-              size: 36,
-              color: iconColor,
-            ),
+            Icon(Icons.meeting_room_outlined, size: 36, color: iconColor),
             const SizedBox(height: 12),
             Text(
               room.name,
@@ -570,9 +580,9 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       final times = overlapping
           .map((s) => '${_formatTime(s.startTime)}~${_formatTime(s.endTime)}')
           .join(', ');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('해당 시간대에 이미 예약이 있습니다. ($times)')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('해당 시간대에 이미 예약이 있습니다. ($times)')));
       return;
     }
 
@@ -794,16 +804,25 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('예약 취소', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          '예약 취소',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         content: const Text('해당 예약을 취소하시겠습니까?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('아니요', style: TextStyle(color: Color(0xFF8B95A1))),
+            child: const Text(
+              '아니요',
+              style: TextStyle(color: Color(0xFF8B95A1)),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('취소하기', style: TextStyle(color: Color(0xFFF04452))),
+            child: const Text(
+              '취소하기',
+              style: TextStyle(color: Color(0xFFF04452)),
+            ),
           ),
         ],
       ),
@@ -826,9 +845,9 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       if (!mounted) return;
 
       if (res.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('예약이 취소되었습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('예약이 취소되었습니다.')));
         _fetchDayReservations();
       } else {
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
@@ -838,9 +857,9 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('서버에 연결할 수 없습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('서버에 연결할 수 없습니다.')));
       }
     }
   }
