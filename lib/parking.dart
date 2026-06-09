@@ -2,8 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_http.dart';
 
 class ParkingScreen extends StatefulWidget {
   const ParkingScreen({super.key});
@@ -13,8 +12,6 @@ class ParkingScreen extends StatefulWidget {
 }
 
 class _ParkingScreenState extends State<ParkingScreen> {
-  static const String _baseUrl = 'https://api.sjparkx1129.com';
-
   // ─────────────────────────────────────────────
   // 주차장 구역 매핑 — 백엔드 zones 시드와 일치
   //   key   : 백엔드 zone_id
@@ -79,16 +76,8 @@ class _ParkingScreenState extends State<ParkingScreen> {
 
   Future<void> _fetchParkingData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-      if (token == null || token.isEmpty) return;
-
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/v1/parking/zones/$_selectedZoneId/spots'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final response = await AuthHttp.instance.get(
+        '/api/v1/parking/zones/$_selectedZoneId/spots',
       );
 
       if (!mounted) return;
@@ -130,17 +119,9 @@ class _ParkingScreenState extends State<ParkingScreen> {
 
   Future<void> _fetchAllZoneSummary() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-      if (token == null || token.isEmpty) return;
-
       for (final zoneId in parkingZones.keys) {
-        final response = await http.get(
-          Uri.parse('$_baseUrl/api/v1/parking/zones/$zoneId/spots'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
+        final response = await AuthHttp.instance.get(
+          '/api/v1/parking/zones/$zoneId/spots',
         );
 
         if (response.statusCode == 200) {

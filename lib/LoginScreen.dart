@@ -26,109 +26,11 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ─────────────────────────────────────────────
-  // 토큰 저장/조회 유틸
-  // ─────────────────────────────────────────────
-
-  Future<String?> _getAccessToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('auth_token');
-  }
-
-  Future<String?> _getRefreshToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('refresh_token');
-  }
-
-  Future<void> _saveAccessToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token);
-  }
-
-  Future<void> _clearTokens() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
-    await prefs.remove('refresh_token');
-  }
-
-  // ─────────────────────────────────────────────
-  // Access Token 재발급
-  // ─────────────────────────────────────────────
-
-  /// Refresh Token으로 새 Access Token을 발급받는다.
-  /// 실패하면 null 반환 → 로그인 화면으로 이동.
-  Future<String?> _refreshAccessToken() async {
-    final refreshToken = await _getRefreshToken();
-    if (refreshToken == null || refreshToken.isEmpty) return null;
-
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/api/v1/auth/refresh'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refreshToken': refreshToken}),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final newAccessToken = data['data']['accessToken'] as String?;
-        if (newAccessToken != null) {
-          await _saveAccessToken(newAccessToken);
-          return newAccessToken;
-        }
-      }
-    } catch (_) {}
-
-    return null;
-  }
-
-  // ─────────────────────────────────────────────
-  // 공통 인증 API 요청 (401 시 자동 재발급)
-  // ─────────────────────────────────────────────
-
-  Future<http.Response> apiRequest({
-    required Future<http.Response> Function(String accessToken) call,
-  }) async {
-    String? token = await _getAccessToken();
-    if (token == null || token.isEmpty) {
-      _goToLogin();
-      return http.Response('{"message":"unauthorized"}', 401);
-    }
-
-    // 1차 시도
-    http.Response response = await call(token);
-
-    // Access Token 만료 → 재발급 후 재시도
-    if (response.statusCode == 401) {
-      final newToken = await _refreshAccessToken();
-
-      if (newToken == null) {
-        // Refresh Token도 만료 → 로그아웃
-        await _clearTokens();
-        _goToLogin();
-        return http.Response('{"message":"session_expired"}', 401);
-      }
-
-      // 새 토큰으로 재시도
-      response = await call(newToken);
-    }
-
-    return response;
-  }
-
-  // ─────────────────────────────────────────────
-  // 로그인 화면으로 이동
-  // ─────────────────────────────────────────────
-
-  void _goToLogin() {
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-    );
-  }
-
-  // ─────────────────────────────────────────────
   // 로그인
   // ─────────────────────────────────────────────
+  //
+  // 로그인 이후의 인증 요청/토큰 재발급은 lib/auth_http.dart 의 AuthHttp 가
+  // 일원화해 처리한다(401 시 refresh + 재시도, 만료 시 로그인 이동).
 
   Future<void> _login() async {
     final String email = _idController.text.trim();
@@ -169,6 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('auth_token', accessToken ?? '');
         await prefs.setString('refresh_token', refreshToken ?? '');
 
+        if (!mounted) return; // 토큰 저장 await 이후 context 사용 전 재확인
         // 로그인 성공 후 홈 화면으로 이동
         Navigator.pushReplacement(
           context,

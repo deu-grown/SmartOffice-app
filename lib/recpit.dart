@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_http.dart';
 
 class ReceiptScreen extends StatefulWidget {
   const ReceiptScreen({super.key});
@@ -11,8 +10,6 @@ class ReceiptScreen extends StatefulWidget {
 }
 
 class _ReceiptScreenState extends State<ReceiptScreen> {
-  static const String _baseUrl = 'https://api.sjparkx1129.com';
-
   bool _isLoading = true;
   String _errorMessage = '';
 
@@ -42,17 +39,6 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     });
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-
-      if (token == null || token.isEmpty) {
-        setState(() {
-          _errorMessage = '로그인이 필요합니다.';
-          _isLoading = false;
-        });
-        return;
-      }
-
       // 최근 N개월(현재 달부터 역순) (year, month) 리스트 생성
       final now = DateTime.now();
       final periods = List<DateTime>.generate(
@@ -62,18 +48,11 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
 
       // 본인 급여 단건 API를 월별로 병렬 호출
       final responses = await Future.wait(
-        periods.map((d) {
-          final uri = Uri.parse(
-            '$_baseUrl/api/v1/salary/records/me?year=${d.year}&month=${d.month}',
-          );
-          return http.get(
-            uri,
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          );
-        }),
+        periods.map(
+          (d) => AuthHttp.instance.get(
+            '/api/v1/salary/records/me?year=${d.year}&month=${d.month}',
+          ),
+        ),
       );
 
       if (!mounted) return;

@@ -1,15 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-
-const String _baseUrl = 'https://api.sjparkx1129.com';
-
-Future<String?> _getToken() async {
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getString('auth_token');
-}
+import 'auth_http.dart';
 
 // --- 데이터 모델 ---
 class ZoneRoom {
@@ -69,22 +61,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
     });
 
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) {
-        setState(() {
-          _errorMessage = '로그인이 필요합니다.';
-          _isLoading = false;
-        });
-        return;
-      }
-
-      final res = await http.get(
-        Uri.parse('$_baseUrl/api/v1/zones/reservable'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      );
+      final res = await AuthHttp.instance.get('/api/v1/zones/reservable');
 
       if (!mounted) return;
 
@@ -109,7 +86,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
           _isLoading = false;
         });
 
-        _fetchTodayBookedRooms(rooms, token);
+        _fetchTodayBookedRooms(rooms);
       } else {
         setState(() {
           _errorMessage = '구역 정보를 불러올 수 없습니다. (${res.statusCode})';
@@ -135,10 +112,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
     }
   }
 
-  Future<void> _fetchTodayBookedRooms(
-    List<ZoneRoom> rooms,
-    String token,
-  ) async {
+  Future<void> _fetchTodayBookedRooms(List<ZoneRoom> rooms) async {
     final today = DateTime.now();
     final dateStr =
         '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
@@ -146,14 +120,8 @@ class _RoomListScreenState extends State<RoomListScreen> {
     final entries = await Future.wait(
       rooms.map((room) async {
         try {
-          final res = await http.get(
-            Uri.parse(
-              '$_baseUrl/api/v1/zones/${room.id}/reservations?date=$dateStr',
-            ),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
+          final res = await AuthHttp.instance.get(
+            '/api/v1/zones/${room.id}/reservations?date=$dateStr',
           );
           if (res.statusCode == 200) {
             final body = jsonDecode(utf8.decode(res.bodyBytes));
@@ -380,16 +348,7 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
 
   Future<void> _fetchUserName() async {
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) return;
-
-      final res = await http.get(
-        Uri.parse('$_baseUrl/api/v1/users/me'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      );
+      final res = await AuthHttp.instance.get('/api/v1/users/me');
 
       if (!mounted) return;
 
@@ -411,20 +370,11 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     setState(() => _isLoadingSlots = true);
 
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) return;
-
       final dateStr =
           '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
 
-      final res = await http.get(
-        Uri.parse(
-          '$_baseUrl/api/v1/zones/${widget.room.id}/reservations?date=$dateStr',
-        ),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
+      final res = await AuthHttp.instance.get(
+        '/api/v1/zones/${widget.room.id}/reservations?date=$dateStr',
       );
 
       if (!mounted) return;
@@ -589,29 +539,15 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
-        return;
-      }
-
-      final body = jsonEncode({
-        'zoneId': widget.room.id,
-        'startTime': _toIso(_selectedDate, _startTime!),
-        'endTime': _toIso(_selectedDate, _endTime!),
-        if (_purposeController.text.trim().isNotEmpty)
-          'purpose': _purposeController.text.trim(),
-      });
-
-      final res = await http.post(
-        Uri.parse('$_baseUrl/api/v1/reservations'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
+      final res = await AuthHttp.instance.post(
+        '/api/v1/reservations',
+        body: {
+          'zoneId': widget.room.id,
+          'startTime': _toIso(_selectedDate, _startTime!),
+          'endTime': _toIso(_selectedDate, _endTime!),
+          if (_purposeController.text.trim().isNotEmpty)
+            'purpose': _purposeController.text.trim(),
         },
-        body: body,
       );
 
       if (!mounted) return;
@@ -831,15 +767,8 @@ class _ReservationDetailScreenState extends State<ReservationDetailScreen> {
     if (confirmed != true) return;
 
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) return;
-
-      final res = await http.delete(
-        Uri.parse('$_baseUrl/api/v1/reservations/$reservationId'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
+      final res = await AuthHttp.instance.delete(
+        '/api/v1/reservations/$reservationId',
       );
 
       if (!mounted) return;

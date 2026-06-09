@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // 🌟 1. 세로 고정을 위해 추가된 패키지
 import 'LoginScreen.dart'; // 🌟 방금 우리가 만든 로그인 화면 부품을 불러옵니다!
+import 'auth_http.dart'; // 세션 만료 시 전역 로그인 이동을 위한 navigatorKey
 
 // 앱의 진입점 (여기서부터 앱이 시작됩니다)
 void main() async {
@@ -24,6 +25,7 @@ class SmartOfficeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appNavigatorKey, // 세션 만료 시 어디서든 로그인 화면으로 이동
       debugShowCheckedModeBanner: false, // 우측 상단 'DEBUG' 띠 제거
       title: 'Smart Office AC', // 앱 이름
       theme: ThemeData(

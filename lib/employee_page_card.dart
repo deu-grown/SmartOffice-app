@@ -6,11 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'menu.dart';
 import 'LoginScreen.dart';
+import 'auth_http.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -74,22 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-
-      // 토큰 없으면 바로 로그인 화면으로
-      if (token == null || token.isEmpty) {
-        _goToLogin();
-        return;
-      }
-
-      final response = await http.get(
-        Uri.parse('https://api.sjparkx1129.com/api/v1/users/me'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
+      final response = await AuthHttp.instance.get('/api/v1/users/me');
 
       // 인증 실패 시 로그인 화면으로
       if (response.statusCode == 401 || response.statusCode == 403) {
@@ -129,18 +114,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _logout() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final String? accessToken = prefs.getString('auth_token');
       final String? refreshToken = prefs.getString('refresh_token');
 
-      // 서버에 로그아웃 요청
-      if (accessToken != null && refreshToken != null) {
-        await http.post(
-          Uri.parse('https://api.sjparkx1129.com/api/v1/auth/logout'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $accessToken',
-          },
-          body: jsonEncode({'refreshToken': refreshToken}),
+      // 서버에 로그아웃 요청 (액세스 토큰은 AuthHttp 가 자동 첨부)
+      if (refreshToken != null) {
+        await AuthHttp.instance.post(
+          '/api/v1/auth/logout',
+          body: {'refreshToken': refreshToken},
         );
       }
     } catch (_) {
