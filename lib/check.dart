@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_http.dart';
 
 class AttendancePage extends StatefulWidget {
   const AttendancePage({super.key});
@@ -33,8 +32,6 @@ class AttendanceRecord {
 }
 
 class _AttendancePageState extends State<AttendancePage> {
-  static const String _baseUrl = 'https://api.sjparkx1129.com';
-
   final int _currentYear = DateTime.now().year;
   late int _selectedMonth;
   late List<int> _months;
@@ -105,11 +102,6 @@ class _AttendancePageState extends State<AttendancePage> {
     return h;
   }
 
-  Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('auth_token');
-  }
-
   String _mapStatus(String raw) {
     switch (raw) {
       case 'NORMAL':
@@ -140,12 +132,10 @@ class _AttendancePageState extends State<AttendancePage> {
     String dayOfWeek,
     int month,
     int day,
-    Map<String, String> headers,
   ) async {
     try {
-      final res = await http.get(
-        Uri.parse('$_baseUrl/api/v1/attendance/me/daily?date=$dateStr'),
-        headers: headers,
+      final res = await AuthHttp.instance.get(
+        '/api/v1/attendance/me/daily?date=$dateStr',
       );
 
       if (res.statusCode == 200) {
@@ -182,20 +172,6 @@ class _AttendancePageState extends State<AttendancePage> {
     });
 
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) {
-        setState(() {
-          _errorMessage = '로그인이 필요합니다.';
-          _isLoading = false;
-        });
-        return;
-      }
-
-      final headers = {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
-
       final today = DateTime.now();
       final lastDay = DateTime(_currentYear, month + 1, 0).day;
       final endDay =
@@ -209,9 +185,8 @@ class _AttendancePageState extends State<AttendancePage> {
       int absentCount = 0;
       int earlyLeaveCount = 0;
 
-      final monthRes = await http.get(
-        Uri.parse('$_baseUrl/api/v1/attendance/me/monthly?month=$monthStr'),
-        headers: headers,
+      final monthRes = await AuthHttp.instance.get(
+        '/api/v1/attendance/me/monthly?month=$monthStr',
       );
       if (monthRes.statusCode == 200) {
         final body = jsonDecode(utf8.decode(monthRes.bodyBytes));
@@ -243,7 +218,7 @@ class _AttendancePageState extends State<AttendancePage> {
           )));
         } else {
           futures.add(
-            _fetchDailyRecord(dateStr, dayOfWeek, month, d, headers),
+            _fetchDailyRecord(dateStr, dayOfWeek, month, d),
           );
         }
       }

@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_http.dart';
 
 class LightZoneData {
   final int zoneId;
@@ -27,8 +26,6 @@ class LightingControlScreen extends StatefulWidget {
 }
 
 class _LightingControlScreenState extends State<LightingControlScreen> {
-  static const String _baseUrl = 'https://api.sjparkx1129.com';
-
   // V15 시드 기반 — 구역별 첫 번째 LIGHT 장치
   static const _zoneDeviceMap = [
     {'zoneId': 2, 'zoneName': '회의실 A', 'deviceId': 21},
@@ -60,11 +57,6 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
         .toList();
   }
 
-  Future<String?> _getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('auth_token');
-  }
-
   Future<void> _toggleLight(int index) async {
     final zone = _zones[index];
 
@@ -83,34 +75,14 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
     });
 
     try {
-      final token = await _getToken();
-      if (token == null || token.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _zones[index].isLightOn = !newState;
-            _zones[index].isSending = false;
-          });
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('로그인이 필요합니다.')));
-        }
-        return;
-      }
-
-      final body = jsonEncode({
-        'zoneId': zone.zoneId,
-        'deviceId': zone.deviceId,
-        'command': 'LIGHT',
-        'value': newState ? 'ON' : 'OFF',
-      });
-
-      final res = await http.post(
-        Uri.parse('$_baseUrl/api/v1/controls'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
+      final res = await AuthHttp.instance.post(
+        '/api/v1/controls',
+        body: {
+          'zoneId': zone.zoneId,
+          'deviceId': zone.deviceId,
+          'command': 'LIGHT',
+          'value': newState ? 'ON' : 'OFF',
         },
-        body: body,
       );
 
       if (!mounted) return;

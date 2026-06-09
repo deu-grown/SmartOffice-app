@@ -2,8 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_http.dart';
 
 class SensorZoneData {
   final int zoneId;
@@ -31,8 +30,6 @@ class TempControlScreen extends StatefulWidget {
 }
 
 class _TempControlScreenState extends State<TempControlScreen> {
-  static const String _baseUrl = 'https://api.sjparkx1129.com';
-
   // 센서 데이터를 조회할 사무 공간 구역 목록 (시드 기반)
   static const Map<int, String> _officeZones = {
     2:  '회의실 A',
@@ -69,29 +66,11 @@ class _TempControlScreenState extends State<TempControlScreen> {
 
   Future<void> _fetchSensorData() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? token = prefs.getString('auth_token');
-      if (token == null || token.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _errorMessage = '로그인이 필요합니다.';
-            _isLoading = false;
-          });
-        }
-        return;
-      }
-
-      final headers = {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
-
       // 각 구역별로 GET /api/v1/sensors/latest?zoneId= 병렬 호출
       final futures = _officeZones.entries.map((entry) async {
         try {
-          final res = await http.get(
-            Uri.parse('$_baseUrl/api/v1/sensors/latest?zoneId=${entry.key}'),
-            headers: headers,
+          final res = await AuthHttp.instance.get(
+            '/api/v1/sensors/latest?zoneId=${entry.key}',
           );
           if (res.statusCode == 200) {
             final body = jsonDecode(utf8.decode(res.bodyBytes));
