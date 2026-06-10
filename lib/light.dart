@@ -94,9 +94,12 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
 
     final newState = !zone.isLightOn;
 
+    // 응답 처리는 캡처한 zone 객체를 직접 갱신한다. 전송 중 refresh 재조회로
+    // _zones 가 교체·축소돼도 인덱스를 다시 타지 않아 RangeError 가 발생하지 않는다.
+    // (재조회로 버려진 옛 zone 객체를 갱신하더라도 새 리스트에는 영향이 없다.)
     setState(() {
-      _zones[index].isLightOn = newState;
-      _zones[index].isSending = true;
+      zone.isLightOn = newState;
+      zone.isSending = true;
     });
 
     try {
@@ -113,11 +116,11 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
       if (!mounted) return;
 
       if (res.statusCode == 200) {
-        setState(() => _zones[index].isSending = false);
+        setState(() => zone.isSending = false);
       } else {
         setState(() {
-          _zones[index].isLightOn = !newState;
-          _zones[index].isSending = false;
+          zone.isLightOn = !newState;
+          zone.isSending = false;
         });
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
         ScaffoldMessenger.of(context).showSnackBar(
@@ -127,8 +130,8 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _zones[index].isLightOn = !newState;
-          _zones[index].isSending = false;
+          zone.isLightOn = !newState;
+          zone.isSending = false;
         });
         ScaffoldMessenger.of(
           context,
