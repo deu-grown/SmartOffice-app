@@ -26,35 +26,60 @@ class LightingControlScreen extends StatefulWidget {
 }
 
 class _LightingControlScreenState extends State<LightingControlScreen> {
-  // V15 시드 기반 — 구역별 첫 번째 LIGHT 장치
-  static const _zoneDeviceMap = [
-    {'zoneId': 2, 'zoneName': '회의실 A', 'deviceId': 21},
-    {'zoneId': 4, 'zoneName': '회의실 B', 'deviceId': 24},
-    {'zoneId': 5, 'zoneName': '개발팀 좌석', 'deviceId': 29},
-    {'zoneId': 7, 'zoneName': '서버실', 'deviceId': 34},
-    {'zoneId': 10, 'zoneName': '회의실 C', 'deviceId': 37},
-    {'zoneId': 11, 'zoneName': '회의실 D', 'deviceId': 40},
-    {'zoneId': 12, 'zoneName': '회의실 E', 'deviceId': 44},
-    {'zoneId': 13, 'zoneName': '휴게실', 'deviceId': 48},
-    {'zoneId': 14, 'zoneName': '카페 라운지', 'deviceId': 51},
-  ];
-
   List<LightZoneData> _zones = [];
   int _selectedIndex = 0;
+  bool _isLoading = true;
+  String _errorMessage = '';
 
   @override
   void initState() {
     super.initState();
-    _zones = _zoneDeviceMap
-        .map(
-          (z) => LightZoneData(
-            zoneId: z['zoneId'] as int,
-            zoneName: z['zoneName'] as String,
-            deviceId: z['deviceId'] as int,
-            isLightOn: false,
-          ),
-        )
-        .toList();
+    _fetchLights();
+  }
+
+  // 서버에서 ACTIVE 조명 장치 목록을 받아 구역별 첫 장치로 구성한다.
+  Future<void> _fetchLights() async {
+    try {
+      final res = await AuthHttp.instance.get('/api/v1/devices/lights');
+      if (!mounted) return;
+
+      if (res.statusCode == 200) {
+        final body = jsonDecode(utf8.decode(res.bodyBytes));
+        if (body['code'] == 'success') {
+          final List<dynamic> list = body['data'] as List<dynamic>;
+          // 서버가 zoneId·deviceId 순으로 정렬해 내려주므로 구역별 첫 장치만 취한다.
+          final Map<int, LightZoneData> byZone = {};
+          for (final item in list) {
+            final zoneId = item['zoneId'] as int;
+            if (byZone.containsKey(zoneId)) continue;
+            byZone[zoneId] = LightZoneData(
+              zoneId: zoneId,
+              zoneName: item['zoneName'] as String,
+              deviceId: item['deviceId'] as int,
+              isLightOn: false,
+            );
+          }
+          setState(() {
+            _zones = byZone.values.toList();
+            if (_selectedIndex >= _zones.length) _selectedIndex = 0;
+            _isLoading = false;
+            _errorMessage = '';
+          });
+          return;
+        }
+      }
+
+      setState(() {
+        _isLoading = false;
+        _errorMessage = '조명 목록을 불러오지 못했습니다.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = '서버에 연결할 수 없습니다.';
+      });
+    }
   }
 
   Future<void> _toggleLight(int index) async {
@@ -69,9 +94,12 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
 
     final newState = !zone.isLightOn;
 
+    // 응답 처리는 캡처한 zone 객체를 직접 갱신한다. 전송 중 refresh 재조회로
+    // _zones 가 교체·축소돼도 인덱스를 다시 타지 않아 RangeError 가 발생하지 않는다.
+    // (재조회로 버려진 옛 zone 객체를 갱신하더라도 새 리스트에는 영향이 없다.)
     setState(() {
-      _zones[index].isLightOn = newState;
-      _zones[index].isSending = true;
+      zone.isLightOn = newState;
+      zone.isSending = true;
     });
 
     try {
@@ -88,11 +116,11 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
       if (!mounted) return;
 
       if (res.statusCode == 200) {
-        setState(() => _zones[index].isSending = false);
+        setState(() => zone.isSending = false);
       } else {
         setState(() {
-          _zones[index].isLightOn = !newState;
-          _zones[index].isSending = false;
+          zone.isLightOn = !newState;
+          zone.isSending = false;
         });
         final decoded = jsonDecode(utf8.decode(res.bodyBytes));
         ScaffoldMessenger.of(context).showSnackBar(
@@ -102,8 +130,8 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _zones[index].isLightOn = !newState;
-          _zones[index].isSending = false;
+          zone.isLightOn = !newState;
+          zone.isSending = false;
         });
         ScaffoldMessenger.of(
           context,
@@ -136,13 +164,8 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
           IconButton(
             icon: const Icon(Icons.refresh, color: Color(0xFF4E5968)),
             onPressed: () {
-              setState(() {
-                for (final z in _zones) {
-                  z.isLightOn = false;
-                  z.isSending = false;
-                }
-                _selectedIndex = 0;
-              });
+              setState(() => _isLoading = true);
+              _fetchLights();
             },
           ),
         ],
@@ -152,7 +175,42 @@ class _LightingControlScreenState extends State<LightingControlScreen> {
   }
 
   Widget _buildBody() {
-    if (_zones.isEmpty) return const SizedBox.shrink();
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF4E5968)),
+      );
+    }
+    if (_errorMessage.isNotEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Color(0xFFD1D6DB)),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage,
+              style: const TextStyle(color: Color(0xFF8B95A1), fontSize: 15),
+            ),
+            const SizedBox(height: 24),
+            TextButton(
+              onPressed: () {
+                setState(() => _isLoading = true);
+                _fetchLights();
+              },
+              child: const Text('다시 시도'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_zones.isEmpty) {
+      return const Center(
+        child: Text(
+          '제어 가능한 조명이 없습니다.',
+          style: TextStyle(color: Color(0xFF8B95A1), fontSize: 15),
+        ),
+      );
+    }
     final selectedZone = _zones[_selectedIndex];
 
     return SingleChildScrollView(
